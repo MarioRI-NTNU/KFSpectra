@@ -1,0 +1,11 @@
+# Core
+pyserial>=3.5
+numpy>=1.22
+opencv-python>=4.5
+
+# Optional/Recommended
+pillow
+tqdm
+
+# Camera SDK (manual install)
+# pyueye - Must be installed via IDS Imaging Software Suite
