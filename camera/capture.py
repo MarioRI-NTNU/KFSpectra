@@ -1,59 +1,94 @@
 from pyueye import ueye
 import numpy as np
 import cv2
+import time
+import os
 
-# Initialize the camera
-hCam = ueye.HIDS(0)  # First available camera
-ret = ueye.is_InitCamera(hCam, None)
+class Camera:
+    def __init__(self, exposure_time=100.0, gain=20, width=1936, height=1216):
+        self.hCam = ueye.HIDS(0)
+        self.exposure_time = exposure_time
+        self.gain = gain
+        self.width = width
+        self.height = height
+        self.bits_per_pixel = 8  # MONO8 = 8 bits
+        self.pcImageMemory = ueye.c_mem_p()
+        self.MemID = ueye.int()
+        self.initialized = False
 
-if ret != ueye.IS_SUCCESS:
-    print("❌ Error: Could not initialize camera")
-    exit()
+    def connect(self):
+        ret = ueye.is_InitCamera(self.hCam, None)
+        if ret != ueye.IS_SUCCESS:
+            raise Exception("Failed to initialize camera.")
 
-# Set color mode (adjust based on Peak Cockpit settings)
-ueye.is_SetColorMode(hCam, ueye.IS_CM_MONO8)  # IS_CM_BGR8_PACKED for color
+        # Set color mode to MONO8 (grayscale) for hyperspectral
+        ueye.is_SetColorMode(self.hCam, ueye.IS_CM_MONO8)
 
-# Set Exposure (increase if image is dark)
-desired_exposure_time = 100.0  # Adjust as needed
-ueye.is_Exposure(hCam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.c_double(desired_exposure_time), 8)
+        # Set exposure
+        exposure_param = ueye.c_double(self.exposure_time)
+        ueye.is_Exposure(self.hCam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, exposure_param, 8)
 
-# Set Gain (increase if image is dark)
-desired_gain = 20  # Adjust as needed
-ueye.is_SetHardwareGain(hCam, desired_gain, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
+        # Set hardware gain
+        ueye.is_SetHardwareGain(self.hCam, self.gain, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
 
-# Allocate memory
-sensor_width = 1936  # Camera resolution
-sensor_height = 1216
-pcImageMemory = ueye.c_mem_p()
-MemID = ueye.int()
-ueye.is_AllocImageMem(hCam, sensor_width, sensor_height, 8, pcImageMemory, MemID)
-ueye.is_SetImageMem(hCam, pcImageMemory, MemID)
+        # Allocate memory for image
+        ueye.is_AllocImageMem(self.hCam, self.width, self.height, self.bits_per_pixel, self.pcImageMemory, self.MemID)
+        ueye.is_SetImageMem(self.hCam, self.pcImageMemory, self.MemID)
 
-# Start Capturing
-ueye.is_CaptureVideo(hCam, ueye.IS_WAIT)
+        # Start video capture
+        ueye.is_CaptureVideo(self.hCam, ueye.IS_WAIT)
 
-print("📷 Camera initialized. Press 'q' to exit, 's' to save an image.")
+        self.initialized = True
+        print("Camera initialized and video capture started.")
 
-# Real-time Display Loop
-while True:
-    imageData = ueye.get_data(pcImageMemory, sensor_width, sensor_height, 8, sensor_width, True)
-    image = np.reshape(imageData, (sensor_height, sensor_width))
+    def capture_frame(self):
+        if not self.initialized:
+            raise Exception("Camera not initialized.")
 
-    # Apply contrast enhancement (optional)
-    image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
+        imageData = ueye.get_data(self.pcImageMemory, self.width, self.height, self.bits_per_pixel, self.width, True)
+        image = np.reshape(imageData, (self.height, self.width))
 
-    cv2.imshow("Live Feed", image)
+        # Optional: Apply contrast normalization
+        image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
 
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):  # Quit on 'q'
-        break
-    elif key == ord('s'):  # Save image on 's'
-        cv2.imwrite("captured_frame.png", image)
-        print("✅ Image saved as 'captured_frame.png'")
+        return image
 
-# Cleanup
-ueye.is_FreeImageMem(hCam, pcImageMemory, MemID)
-ueye.is_ExitCamera(hCam)
-cv2.destroyAllWindows()
+    def save_frame(self, filename="captured_frame.png"):
+        frame = self.capture_frame()
+        
+        # Ensure the data directory exists
+        save_dir = os.path.join(os.getcwd(), "data")
+        os.makedirs(save_dir, exist_ok=True)
 
-print("🛑 Camera closed.")
+        # Full path
+        full_path = os.path.join(save_dir, filename)
+
+        cv2.imwrite(full_path, frame)
+        print(f"Image saved at {full_path}")
+
+    def disconnect(self):
+        if self.initialized:
+            ueye.is_FreeImageMem(self.hCam, self.pcImageMemory, self.MemID)
+            ueye.is_ExitCamera(self.hCam)
+            self.initialized = False
+            print("Camera disconnected and resources released.")
+
+if __name__ == "__main__":
+    cam = Camera()
+    try:
+        cam.connect()
+        print("Press 'q' to exit, 's' to save an image.")
+        while True:
+            frame = cam.capture_frame()
+            cv2.imshow("Live Feed", frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('s'):
+                cam.save_frame()
+
+        cv2.destroyAllWindows()
+
+    finally:
+        cam.disconnect()
