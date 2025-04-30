@@ -1,0 +1,12 @@
+[project]
+name = "kfspectra"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.2.5",
+    "opencv-python>=4.11.0.86",
+    "pyserial>=3.5",
+    "pyueye>=4.96.952",
+]
