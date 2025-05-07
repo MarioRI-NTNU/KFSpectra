@@ -24,12 +24,12 @@ def main():
         printer.home()
 
         # Scan parameters
-        start_x = 0
-        end_x = 60  # mm
-        start_z = 0
-        end_z = 38*2  # mm
-        step_size_x = 1 # mm per step (both X and Z)
-        step_size_z = 38 # mm per step (both X and Z)
+        start_x = 100
+        end_x = 100  # mm
+        start_z = 20
+        end_z = 80 # mm
+        step_size_x = 10 # mm per step (both X and Z)
+        step_size_z = 0.2 # mm per step (both X and Z)
 
         # Create a unique folder for this scan
         scan_time = time.strftime("%d%B_%H:%M:%S")  # Example: 27April_20:27:05

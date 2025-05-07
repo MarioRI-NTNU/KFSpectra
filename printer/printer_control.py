@@ -160,9 +160,12 @@ if __name__ == "__main__":
 
     if printer.serial:
         printer.home()
-        printer.move_to(50, 50)
-
-        input("Press any key to continue ")
+        active = True
+        while active:
+            GcodeX, GcodeZ = input("X:"), input("Z:")
+            if GcodeX == "exit":
+                break
+            printer.move_to(x= GcodeX, z=GcodeZ)
 
         printer.disconnect()
     else:

@@ -21,15 +21,22 @@ class Camera:
         if ret != ueye.IS_SUCCESS:
             raise Exception("Failed to initialize camera.")
 
-        # Set color mode to MONO8 (grayscale) for hyperspectral
+        # Set pixel format: Mono8
         ueye.is_SetColorMode(self.hCam, ueye.IS_CM_MONO8)
 
-        # Set exposure
-        exposure_param = ueye.c_double(self.exposure_time)
+        # Exposure time: 92.72 ms
+        exposure_param = ueye.c_double(92.72)
         ueye.is_Exposure(self.hCam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, exposure_param, 8)
 
-        # Set hardware gain
-        ueye.is_SetHardwareGain(self.hCam, self.gain, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
+        # Gain: Master gain = 24
+        ueye.is_SetHardwareGain(self.hCam, 24, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
+
+        # Black level: 4.0
+        ueye.is_Blacklevel(self.hCam, ueye.IS_BLACKLEVEL_CMD_SET_OFFSET, ueye.c_int(4), 4)
+
+        # Disable auto features
+        ueye.is_SetAutoParameter(self.hCam, ueye.IS_SET_ENABLE_AUTO_GAIN, ueye.DOUBLE(0), ueye.DOUBLE(0))
+        ueye.is_SetAutoParameter(self.hCam, ueye.IS_SET_ENABLE_AUTO_SHUTTER, ueye.DOUBLE(0), ueye.DOUBLE(0))
 
         # Allocate memory for image
         ueye.is_AllocImageMem(self.hCam, self.width, self.height, self.bits_per_pixel, self.pcImageMemory, self.MemID)
@@ -41,17 +48,29 @@ class Camera:
         self.initialized = True
         print("Camera initialized and video capture started.")
 
+
     def capture_frame(self):
         if not self.initialized:
             raise Exception("Camera not initialized.")
 
-        imageData = ueye.get_data(self.pcImageMemory, self.width, self.height, self.bits_per_pixel, self.width, True)
+        imageData = ueye.get_data(
+            self.pcImageMemory,
+            self.width,
+            self.height,
+            self.bits_per_pixel,
+            self.width,
+            True
+        )
         image = np.reshape(imageData, (self.height, self.width))
 
         # Optional: Apply contrast normalization
         image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
 
+        # Flip horizontally
+        image = cv2.flip(image, 1)  # 1 = horizontal flip
+
         return image
+
 
     def save_frame(self, filename="captured_frame.png"):
         frame = self.capture_frame()
