@@ -3,43 +3,29 @@ import cv2
 import numpy as np
 import json
 from matplotlib import pyplot as plt
-
-# --- Parameters ---
-bin_size_x = 8       # 8 pixels per spectral band
-start_wavelength = 400  # nm
-end_wavelength = 800    # nm
+from utils import config
 
 def crop_useful_area(img):
-    y_start = 296
-    y_end = 845
-    x_start = 0
-    x_end = 1936
-    cropped = img[y_start:y_end, x_start:x_end]
-    return cropped
+    y0, y1 = config.CROP_Y_START, config.CROP_Y_END
+    x0, x1 = config.CROP_X_START, config.CROP_X_END
+    return img[y0:y1, x0:x1]
 
-def spectral_binning(image_row, bin_size=8):
+def spectral_binning(image_row, bin_size=config.BIN_SIZE_X):
     return np.array([
         np.mean(image_row[i:i+bin_size]) for i in range(0, len(image_row), bin_size)
     ])
 
-def load_calibrated_rgb_bands(calibration_path="calibration.json"):
+def load_calibrated_rgb_bands(calibration_path=config.CALIBRATION_PATH):
     with open(calibration_path, "r") as f:
         calib = json.load(f)
     return calib["red_band"], calib["green_band"], calib["blue_band"]
 
-def correct_perspective(image, scale_y=0.45):
-    """
-    Apply vertical scaling to correct aspect ratio distortion.
-    Adjust scale_y based on visual feedback (e.g., 0.6 flattens the ellipse into a circle).
-    """
+def correct_perspective(image, scale_y=config.PERSPECTIVE_SCALE_Y):
     height, width = image.shape[:2]
     new_height = int(height * scale_y)
-    corrected = cv2.resize(image, (width, new_height), interpolation=cv2.INTER_LINEAR)
-    return corrected
-
+    return cv2.resize(image, (width, new_height), interpolation=cv2.INTER_LINEAR)
 
 def create_hyperspectral_cube(scan_folder):
-    # Load all images
     images = []
     for filename in sorted(os.listdir(scan_folder)):
         if filename.endswith(".png") and filename.startswith("X"):
@@ -53,72 +39,44 @@ def create_hyperspectral_cube(scan_folder):
         print("No images found!")
         return None
 
-    # Assume all cropped images are same size
     height, width = images[0].shape
-    num_bands = width // bin_size_x
-
+    num_bands = width // config.BIN_SIZE_X
     full_width = len(images)
     full_cube = np.zeros((height, full_width, num_bands), dtype=np.uint8)
 
-    # Build cube
     for idx, cropped_img in enumerate(images):
         for row in range(height):
-            binned_spectrum = spectral_binning(cropped_img[row, :], bin_size=bin_size_x)
-            full_cube[row, idx, :] = binned_spectrum
+            binned = spectral_binning(cropped_img[row, :])
+            full_cube[row, idx, :] = binned
 
     return full_cube
 
 def normalize_channel(channel):
-    """Normalize a single band to 0-255 range for better visualization."""
     norm = cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX)
     return norm.astype(np.uint8)
 
-
 def extract_rgb_from_cube(cube):
-    red_band, green_band, blue_band = load_calibrated_rgb_bands()
-
-    red = cube[:, :, red_band]
-    green = cube[:, :, green_band]
-    blue = cube[:, :, blue_band]
-
-    # Normalize each channel separately (per-channel stretch)
-    red = normalize_channel(red)
-    green = normalize_channel(green)
-    blue = normalize_channel(blue)
-
-    # Stack into final RGB image
+    r, g, b = load_calibrated_rgb_bands()
+    red = normalize_channel(cube[:, :, r])
+    green = normalize_channel(cube[:, :, g])
+    blue = normalize_channel(cube[:, :, b])
     rgb = np.stack([blue, green, red], axis=2)
-    rgb_corrected = correct_perspective(rgb, scale_y=0.6)
-    return rgb_corrected.astype(np.uint8)
+    return correct_perspective(rgb)
 
+def auto_select_rgb_bands(cube):
+    h, w, nb = cube.shape
+    wl = np.linspace(config.START_WAVELENGTH, config.END_WAVELENGTH, nb)
+    avg = cube.mean(axis=(0, 1))
 
-def auto_select_rgb_bands(cube, start_wavelength=400, end_wavelength=800):
-    height, width, num_bands = cube.shape
-    wavelengths = np.linspace(start_wavelength, end_wavelength, num_bands)
+    r = np.where((wl >= 600) & (wl <= 700))[0][np.argmax(avg[(wl >= 600) & (wl <= 700)])]
+    g = np.where((wl >= 510) & (wl <= 580))[0][np.argmax(avg[(wl >= 510) & (wl <= 580)])]
+    b = np.where((wl >= 420) & (wl <= 500))[0][np.argmax(avg[(wl >= 420) & (wl <= 500)])]
 
-    avg_spectrum = cube.mean(axis=(0, 1))  # Average over all pixels
-
-    # Band ranges
-    blue_range = (wavelengths >= 420) & (wavelengths <= 500)
-    green_range = (wavelengths >= 510) & (wavelengths <= 580)
-    red_range = (wavelengths >= 600) & (wavelengths <= 700)
-
-    blue_band = np.argmax(avg_spectrum[blue_range])
-    green_band = np.argmax(avg_spectrum[green_range])
-    red_band = np.argmax(avg_spectrum[red_range])
-
-    # Convert local index back to global band index
-    blue_band_idx = np.where(blue_range)[0][blue_band]
-    green_band_idx = np.where(green_range)[0][green_band]
-    red_band_idx = np.where(red_range)[0][red_band]
-
-    print(f"Auto-selected bands: R:{red_band_idx}, G:{green_band_idx}, B:{blue_band_idx}")
-    return red_band_idx, green_band_idx, blue_band_idx
-
-
+    print(f"Auto-selected bands: R:{r}, G:{g}, B:{b}")
+    return r, g, b
 
 if __name__ == "__main__":
-    scan_folder = os.path.join(os.getcwd(), "data", "scan_30April_17:40:21")  # Adjust if needed
+    scan_folder = os.path.join(os.getcwd(), "data", "scan_30April_17:40:21")  # Update if needed
 
     print("Building hyperspectral cube...")
     cube = create_hyperspectral_cube(scan_folder)
@@ -126,27 +84,23 @@ if __name__ == "__main__":
     if cube is not None:
         print(f"Cube shape: {cube.shape} (height, width, bands)")
 
-        # Save cube as .npz
-        cube_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
-        np.savez_compressed(cube_path, cube=cube)
-        print(f"Hyperspectral cube saved to {cube_path}")
+        save_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
+        np.savez_compressed(save_path, cube=cube)
+        print(f"Cube saved to {save_path}")
 
-        # Extract RGB image
-        print("Extracting RGB image from cube...")
+        print("Extracting RGB composite...")
         rgb = extract_rgb_from_cube(cube)
 
-        # Save and show result
         rgb_path = os.path.join(scan_folder, "rgb_composite.png")
         cv2.imwrite(rgb_path, rgb)
-        print(f"RGB composite saved to {rgb_path}")
+        print(f"RGB image saved to {rgb_path}")
 
         cv2.imshow("RGB Composite", rgb)
         print("Press any key to close.")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-
     else:
-        print("❌ Cube build failed.")
+        print("Cube build failed.")
 
 
 

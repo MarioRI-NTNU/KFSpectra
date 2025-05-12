@@ -1,17 +1,23 @@
+import sys
+import os
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 from pyueye import ueye
 import numpy as np
 import cv2
 import time
-import os
+from utils import config
 
 class Camera:
-    def __init__(self, exposure_time=100.0, gain=20, width=1936, height=1216):
+    def __init__(self):
         self.hCam = ueye.HIDS(0)
-        self.exposure_time = exposure_time
-        self.gain = gain
-        self.width = width
-        self.height = height
-        self.bits_per_pixel = 8  # MONO8 = 8 bits
+        self.exposure_time = config.EXPOSURE_TIME_MS
+        self.gain = config.MASTER_GAIN
+        self.width = config.CAMERA_WIDTH
+        self.height = config.CAMERA_HEIGHT
+        self.bits_per_pixel = config.BITS_PER_PIXEL # MONO8 = 8 bits
         self.pcImageMemory = ueye.c_mem_p()
         self.MemID = ueye.int()
         self.initialized = False
@@ -24,15 +30,15 @@ class Camera:
         # Set pixel format: Mono8
         ueye.is_SetColorMode(self.hCam, ueye.IS_CM_MONO8)
 
-        # Exposure time: 92.72 ms
-        exposure_param = ueye.c_double(92.72)
+        # Exposure time
+        exposure_param = ueye.c_double(self.exposure_time)
         ueye.is_Exposure(self.hCam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, exposure_param, 8)
 
-        # Gain: Master gain = 24
-        ueye.is_SetHardwareGain(self.hCam, 24, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
+        # Gain
+        ueye.is_SetHardwareGain(self.hCam, self.gain, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
 
-        # Black level: 4.0
-        ueye.is_Blacklevel(self.hCam, ueye.IS_BLACKLEVEL_CMD_SET_OFFSET, ueye.c_int(4), 4)
+        # Black level
+        ueye.is_Blacklevel(self.hCam, ueye.IS_BLACKLEVEL_CMD_SET_OFFSET, ueye.c_int(config.BLACK_LEVEL), 4)
 
         # Disable auto features
         ueye.is_SetAutoParameter(self.hCam, ueye.IS_SET_ENABLE_AUTO_GAIN, ueye.DOUBLE(0), ueye.DOUBLE(0))
@@ -48,7 +54,6 @@ class Camera:
         self.initialized = True
         print("Camera initialized and video capture started.")
 
-
     def capture_frame(self):
         if not self.initialized:
             raise Exception("Camera not initialized.")
@@ -63,25 +68,18 @@ class Camera:
         )
         image = np.reshape(imageData, (self.height, self.width))
 
-        # Optional: Apply contrast normalization
+        # Normalize contrast
         image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
 
         # Flip horizontally
-        image = cv2.flip(image, 1)  # 1 = horizontal flip
+        image = cv2.flip(image, 1)
 
         return image
 
-
     def save_frame(self, filename="captured_frame.png"):
         frame = self.capture_frame()
-        
-        # Ensure the data directory exists
-        save_dir = os.path.join(os.getcwd(), "data")
-        os.makedirs(save_dir, exist_ok=True)
-
-        # Full path
-        full_path = os.path.join(save_dir, filename)
-
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        full_path = os.path.join(config.DATA_DIR, filename)
         cv2.imwrite(full_path, frame)
         print(f"Image saved at {full_path}")
 
@@ -92,11 +90,14 @@ class Camera:
             self.initialized = False
             print("Camera disconnected and resources released.")
 
-if __name__ == "__main__":
+if __name__ == "__main__":#Display camera feed and save pictures when S key is pressed
     cam = Camera()
     try:
         cam.connect()
         print("Press 'q' to exit, 's' to save an image.")
+
+        save_counter = 1  # Start counting from 1
+
         while True:
             frame = cam.capture_frame()
             cv2.imshow("Live Feed", frame)
@@ -105,9 +106,10 @@ if __name__ == "__main__":
             if key == ord('q'):
                 break
             elif key == ord('s'):
-                cam.save_frame()
+                filename = f"captured_frame_{save_counter}.png"
+                cam.save_frame(filename)
+                save_counter += 1
 
         cv2.destroyAllWindows()
-
     finally:
         cam.disconnect()

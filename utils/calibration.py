@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from pyueye import ueye
 from time import sleep
-from camera.capture import Camera 
+from acquisition.Camera_Control import Camera 
 
 # --- Parameters ---
 bin_size_x = 8

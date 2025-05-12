@@ -1,8 +1,16 @@
+import sys
+import os
+# Add KFSpectra/ to sys.path
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 import serial
 import time
+from utils import config
 
-class PrinterController:
-    def __init__(self, port="/dev/ttyACM0", baudrate=115200, timeout=2):
+class Printer:
+    def __init__(self, port=config.PRINTER_PORT, baudrate=config.PRINTER_BAUDRATE, timeout=config.SERIAL_TIMEOUT):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -89,7 +97,6 @@ class PrinterController:
                             break
 
                 if wait:
-                    # Send M400 manually to wait for motion buffer to clear
                     self.serial.write(b'M400\n')
                     time.sleep(0.1)
 
@@ -106,7 +113,6 @@ class PrinterController:
         else:
             raise Exception("Serial connection not established")
 
-        
     def wait_until_ready(self, timeout=10):
         if not self.serial:
             raise Exception("Serial connection not established")
@@ -126,8 +132,7 @@ class PrinterController:
 
         raise Exception("Timeout waiting for printer to become ready.")
 
-
-    def move_to(self, x=None, z=None, feedrate=1500):
+    def move_to(self, x=None, z=None, feedrate=config.DEFAULT_FEEDRATE):
         cmd = "G1"
         if x is not None:
             cmd += f" X{x}"
@@ -137,16 +142,13 @@ class PrinterController:
         self.send_gcode(cmd, wait=True)
 
     def home(self):
-        self.send_gcode("G1 Z15", wait= True)
+        self.send_gcode("G1 Z15", wait=True)
         print("Homing X...")
         self.send_gcode("G28 X0", wait=True)
-
         print("Homing Z...")
         self.send_gcode("G28 Z0", wait=True)
-
-        self.send_gcode("G90", wait=False)  # Setting positioning mode, no need to wait
+        self.send_gcode("G90", wait=False)
         print("Printer homed!")
-
 
     def disconnect(self):
         if self.serial:
@@ -155,17 +157,16 @@ class PrinterController:
             print("Printer disconnected")
 
 if __name__ == "__main__":
-    printer = PrinterController()
+    printer = Printer()
     printer.connect()
 
     if printer.serial:
         printer.home()
-        active = True
-        while active:
+        while True:
             GcodeX, GcodeZ = input("X:"), input("Z:")
             if GcodeX == "exit":
                 break
-            printer.move_to(x= GcodeX, z=GcodeZ)
+            printer.move_to(x=GcodeX, z=GcodeZ)
 
         printer.disconnect()
     else:

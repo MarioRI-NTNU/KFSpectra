@@ -2,14 +2,20 @@ import sys
 import os
 import warnings
 import time
-warnings.filterwarnings("ignore", category=SyntaxWarning)
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
-from printer.printer_control import PrinterController
-from camera.capture import Camera
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from acquisition.Printer_Control import Printer
+from acquisition.Camera_Control import Camera
+from utils import config
 
 def main():
-    printer = PrinterController()
+    printer = Printer()
     camera = Camera()
 
     try:
@@ -20,54 +26,52 @@ def main():
 
         camera.connect()
 
-        # Home printer axes
+        # Home printer
         printer.home()
 
         # Scan parameters
-        start_x = 100
-        end_x = 100  # mm
-        start_z = 20
-        end_z = 80 # mm
-        step_size_x = 10 # mm per step (both X and Z)
-        step_size_z = 0.2 # mm per step (both X and Z)
+        start_x = config.SCAN_START_X
+        end_x = config.SCAN_END_X
+        start_z = config.SCAN_START_Z
+        end_z = config.SCAN_END_Z
+        step_size_x = config.STEP_SIZE_X
+        step_size_z = config.STEP_SIZE_Z
 
-        # Create a unique folder for this scan
-        scan_time = time.strftime("%d%B_%H:%M:%S")  # Example: 27April_20:27:05
+        # Create a scan folder
+        scan_time = time.strftime("%d%B_%H:%M:%S")
         scan_folder = os.path.join(os.getcwd(), "data", f"scan_{scan_time}")
         os.makedirs(scan_folder, exist_ok=True)
         print(f"Saving scan data to: {scan_folder}")
 
-        # Move to initial position
+        # Move to starting point
         printer.move_to(x=start_x, z=start_z)
-        time.sleep(1)
+        time.sleep(config.PAUSE_AFTER_MOVE)
 
         print("Starting full 2D scan...")
-
-        direction = 1  # Start moving in positive X direction
+        direction = 1
 
         for z in np.arange(start_z, end_z + 0.001, step_size_z):
             printer.move_to(z=z)
-            time.sleep(0.5)
+            time.sleep(config.PAUSE_AFTER_MOVE)
 
-            if direction == 1:
-                x_positions = np.arange(start_x, end_x + 0.001, step_size_x)
-            else:
-                x_positions = np.arange(end_x, start_x - 0.001, -step_size_x)
+            x_positions = (
+                np.arange(start_x, end_x + 0.001, step_size_x)
+                if direction == 1
+                else np.arange(end_x, start_x - 0.001, -step_size_x)
+            )
 
             for x in x_positions:
                 print(f"Capturing frame at X={x:.2f} mm, Z={z:.2f} mm")
                 printer.move_to(x=x)
-                time.sleep(0.5)
+                time.sleep(config.PAUSE_AFTER_MOVE)
 
-                # Save image
                 filename = f"X{int(x*10):03}_Z{int(z*10):03}.png"
                 full_path = os.path.join(scan_folder, filename)
                 camera.save_frame(full_path)
 
-            direction *= -1  # Reverse X direction for next Z row
+            direction *= -1
 
         print("Full 2D scan completed successfully.")
-
 
     except Exception as e:
         print(f"Error during scanning: {e}")
@@ -78,3 +82,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
