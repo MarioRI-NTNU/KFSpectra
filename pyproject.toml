@@ -10,4 +10,5 @@ dependencies = [
     "opencv-python>=4.11.0.86",
     "pyserial>=3.5",
     "pyueye>=4.96.952",
+    "spectral>=0.24",
 ]

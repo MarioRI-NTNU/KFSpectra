@@ -101,6 +101,7 @@ dependencies = [
     { name = "opencv-python" },
     { name = "pyserial" },
     { name = "pyueye" },
+    { name = "spectral" },
 ]
 
 [package.metadata]
@@ -110,6 +111,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.11.0.86" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyueye", specifier = ">=4.96.952" },
+    { name = "spectral", specifier = ">=0.24" },
 ]
 
 [[package]]
@@ -353,4 +355,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload_time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload_time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "spectral"
+version = "0.24"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/98/a795e73471a1c1a98696470ada56ac51bb673ef3de8d09813ea408bc3c40/spectral-0.24.tar.gz", hash = "sha256:d10fbdd39715e0b91f1e816f59b0f80423c60c77b87727451721df86d4b28911", size = 219446, upload_time = "2025-04-13T15:31:52.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/7c/f98e32158fe1767960fdc2e6aef809bd57490e1ea71850a2dc2ab7883b67/spectral-0.24-py3-none-any.whl", hash = "sha256:da0090ea92425ebb0d26cad3416886c67ec75dae481905b0a303c8ef92dec537", size = 249042, upload_time = "2025-04-13T15:31:50.128Z" },
 ]
