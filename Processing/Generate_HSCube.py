@@ -108,30 +108,48 @@ if __name__ == "__main__":
     if cube is not None:
         print(f"Cube shape: {cube.shape} (height, width, bands)")
 
-        # Save compressed NumPy cube
-        npz_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
-        np.savez_compressed(npz_path, cube=cube)
-        print(f"Cube saved to {npz_path}")
+        # Save compressed NumPy cube (optional)
+        if config.SAVE_NPZ_CUBE:
+            npz_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
+            np.savez_compressed(npz_path, cube=cube)
+            print(f"Cube saved to {npz_path}")
 
-        envi_path = os.path.join(scan_folder, "hyperspectral_cube_envi")
-        wavelengths = np.linspace(config.START_WAVELENGTH, config.END_WAVELENGTH, cube.shape[2])
-        export_cube_envi(cube, envi_path, wavelengths=wavelengths)
-        print(f"ENVI cube exported to: {envi_path}.hdr / .dat")
+        # Save ENVI .hdr + .dat or .img
+        if config.SAVE_ENVI_CUBE:
+            from spectral import envi
+            def export_cube_envi(cube, output_path, wavelengths=None):
+                h, w, b = cube.shape
+                cube_envi = cube.transpose(2, 0, 1)
+                metadata = {
+                    'lines': h,
+                    'samples': w,
+                    'bands': b,
+                    'interleave': 'bsq',
+                    'data type': 1,
+                    'byte order': 0,
+                    'sensor type': 'KFSpectra_HSI',
+                }
+                if wavelengths is not None:
+                    metadata['wavelength'] = list(map(str, wavelengths))
+                    metadata['wavelength units'] = 'nm'
+                envi.save_image(output_path + '.hdr', cube_envi, metadata=metadata, dtype=np.uint8, force=True)
 
-        # Extract RGB image from cube
-        print("Extracting RGB composite...")
-        rgb = extract_rgb_from_cube(cube)
+                if config.ENVI_EXTENSION != ".img":
+                    os.rename(output_path + ".img", output_path + config.ENVI_EXTENSION)
 
-        # Save RGB image
-        rgb_path = os.path.join(scan_folder, "rgb_composite.png")
-        cv2.imwrite(rgb_path, rgb)
-        print(f"RGB image saved to {rgb_path}")
+            envi_base = os.path.join(scan_folder, "hyperspectral_cube_envi")
+            wavelengths = np.linspace(config.START_WAVELENGTH, config.END_WAVELENGTH, cube.shape[2])
+            export_cube_envi(cube, envi_base, wavelengths=wavelengths)
+            print(f"ENVI cube saved to {envi_base}{config.ENVI_EXTENSION} and .hdr")
 
-        # Show RGB image
-        cv2.imshow("RGB Composite", rgb)
-        print("Press any key to close.")
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    else:
-        print("Cube build failed.")
+        # Extract and save RGB
+        if config.SAVE_RGB_PNG:
+            print("Extracting RGB composite...")
+            rgb = extract_rgb_from_cube(cube)
+            rgb_path = os.path.join(scan_folder, "rgb_composite.png")
+            cv2.imwrite(rgb_path, rgb)
+            print(f"RGB image saved to {rgb_path}")
+            cv2.imshow("RGB Composite", rgb)
+            print("Press any key to close.")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()

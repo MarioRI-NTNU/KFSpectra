@@ -75,5 +75,13 @@ CROP_X_END = 1936
 # Perspective correction
 PERSPECTIVE_SCALE_Y = 0.6
 
+#Saving options
+SAVE_RGB_PNG = True
+SAVE_NPZ_CUBE = False
+SAVE_ENVI_CUBE = True
+
+# Optional: preferred ENVI extension
+ENVI_EXTENSION = ".dat"  # or ".img"
+
 # Calibration file path
 CALIBRATION_PATH = "calibration.json"
