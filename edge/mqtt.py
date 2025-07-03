@@ -1,0 +1,268 @@
+import os
+import sys
+import yaml
+import json
+import time
+import datetime
+import glob
+import subprocess
+
+import paho.mqtt.client as mqtt
+import cv2
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from camera_control import Camera
+from printer_control import Printer
+
+CONFIG_PATH = os.path.join(BASE_DIR, 'edge', 'config.yaml')
+
+def load_config():
+    with open(CONFIG_PATH, 'r') as f:
+        return yaml.safe_load(f)
+
+class HSI_MQTT:
+    def __init__(self):
+        self.config = load_config()
+        self.client = mqtt.Client()
+
+        self.broker = self.config["mqtt"]["broker"]
+        self.port = self.config["mqtt"]["port"]
+        self.topics = self.config["mqtt"]["topics"]
+
+        # Initialize camera and printer with initial config (can be reloaded later)
+        self.printer = Printer(self.config["printer"])
+        self.cam = Camera(self.config["camera"])
+
+    def connect(self):
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+
+        print(f"Connecting to MQTT broker at {self.broker}:{self.port} ...")
+        self.client.connect(self.broker, self.port, 60)
+
+        self.client.loop_start()
+
+    def on_connect(self, client, userdata, flags, rc):
+        print("Connected to MQTT broker.")
+        self.client.subscribe(self.topics["scan_command"])
+        self.client.subscribe(self.topics["camera_picture"])
+        self.client.subscribe(self.topics["printer_gcode"])
+        self.client.subscribe(self.topics["config_request"])
+
+        # Publish current config once on connect
+        self.publish_status({"config": self.config})
+        self.publish_camera_status()
+        self.publish_printer_status()
+        print("Published current config on connect.")
+
+    def on_message(self, client, userdata, msg):
+        topic = msg.topic
+        payload = json.loads(msg.payload.decode())
+        print(f"Received message on {topic}: {payload}")
+
+        if topic == self.topics["scan_command"]:
+            self.handle_scan_command(payload)
+        elif topic == self.topics["camera_picture"]:
+            self.handle_camera_picture(payload)
+        elif topic == self.topics["printer_gcode"]:
+            self.handle_printer_gcode(payload)
+        elif topic == self.topics["config_request"]:
+            self.handle_config_update(payload)
+
+    def cleanup_old_scans(self, data_dir, keep=5):
+        scans = sorted(glob.glob(os.path.join(data_dir, "scan_*")), key=os.path.getmtime)
+        if len(scans) > keep:
+            for old_scan in scans[:-keep]:
+                print(f"Deleting old scan folder: {old_scan}")
+                subprocess.run(["rm", "-rf", old_scan])
+
+        tarballs = glob.glob(os.path.join(data_dir, "scan_*.tar.gz"))
+        for tb in tarballs:
+            os.remove(tb)
+
+    def handle_scan_command(self, payload):
+        print("Starting scan routine...")
+        self.publish_status({"status": "scanning"})
+
+        try:
+            # Reload config fresh for scan operation
+            config = load_config()
+            printer_cfg = config["printer"]
+            camera_cfg = config["camera"]
+
+            # Re-instantiate printer and camera with fresh config
+            self.printer = Printer(printer_cfg)
+            self.cam = Camera(camera_cfg)
+
+            x_step = printer_cfg["X_STEP"]
+            x_end = printer_cfg["X_END"]
+            z_step = printer_cfg["Z_STEP"]
+            z_end = printer_cfg["Z_END"]
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = os.path.join(BASE_DIR, "data", f"scan_{timestamp}")
+            os.makedirs(output_dir, exist_ok=True)
+
+            self.printer.connect()
+            self.printer.home()
+
+            self.cam.connect()
+
+            for z in range(0, int(z_end), int(z_step)):
+                for x in range(0, int(x_end), int(x_step)):
+                    self.printer.move_to(x=x, z=z)
+                    time.sleep(0.2)
+                    filename = f"frame_X{x}_Z{z}.png"
+                    self.cam.save_frame(os.path.join(output_dir, filename))
+
+                    self.publish_printer_status({
+                        "current_x": x,
+                        "current_z": z
+                    })
+
+            self.cam.disconnect()
+            self.printer.disconnect()
+
+            # Tarball output dir
+            tarball = f"{output_dir}.tar.gz"
+            subprocess.run(["tar", "-czf", tarball, "-C", os.path.dirname(output_dir), os.path.basename(output_dir)])
+            print(f"Scan output tarball: {tarball}")
+
+            self.publish_status({
+                "status": "idle",
+                "scan_tarball": tarball
+            })
+            self.cleanup_old_scans(os.path.join(BASE_DIR, "data"))
+
+        except Exception as e:
+            print(f"Scan error: {e}")
+            self.publish_status({"status": "error"})
+
+    def handle_camera_picture(self, payload):
+        print("Taking debug camera picture...")
+
+        config = load_config()
+        camera_cfg = config["camera"]
+        ssh_cfg = config["ssh"]
+
+        # Local output: where Camera writes
+        data_dir = camera_cfg.get("DATA_DIR", "data")
+        output_name = "debug_picture.png"
+        local_picture = os.path.join(BASE_DIR, data_dir, output_name)
+
+        try:
+            # Try the real camera
+            self.cam = Camera(camera_cfg)
+            self.cam.connect()
+            self.cam.save_frame(filename=output_name)
+            self.cam.disconnect()
+            print(f"Camera capture saved at {local_picture}")
+
+        except Exception as e:
+            print(f"[WARNING] Camera not connected — using fallback image. Reason: {e}")
+            # If the camera fails, ensure we have a fallback `debug_picture.png`
+            # Or pre-fill it so the SCP below still works.
+
+        try:
+            # Push to the HA server using SCP
+            scp_cmd = [
+                "scp",
+                local_picture,
+                f"{ssh_cfg['user']}@{ssh_cfg['server_ip']}:{ssh_cfg['dest_folder']}/latest_debug_picture.png"
+            ]
+            subprocess.run(scp_cmd, check=True)
+            print(f"Debug picture sent to {ssh_cfg['server_ip']}:{ssh_cfg['dest_folder']}")
+
+            self.publish_camera_status({"picture_sent": "true"})
+
+        except Exception as e:
+            print(f"[ERROR] SCP push failed: {e}")
+            self.publish_status({"status": "error"})
+
+    def handle_printer_gcode(self, payload):
+        print("Running printer GCode...")
+        try:
+            config = load_config()
+            printer_cfg = config["printer"]
+            self.printer = Printer(printer_cfg)
+
+            cmd = payload.get("gcode")
+            if not cmd:
+                print("No GCode provided.")
+                return
+
+            self.printer.connect()
+            self.printer.send_gcode(cmd, wait=True)
+            self.printer.disconnect()
+
+            self.publish_printer_status({"last_gcode": cmd})
+
+        except Exception as e:
+            print(f"Printer GCode error: {e}")
+            self.publish_status({"status": "error"})
+
+    def handle_config_update(self, payload):
+        print("Updating config.yaml...")
+        try:
+            new_config = payload.get("config")
+            if not new_config:
+                print("No config provided.")
+                return
+
+            config = load_config()
+
+            for section, params in new_config.items():
+                if section in config:
+                    config[section].update(params)
+                else:
+                    config[section] = params
+
+            with open(CONFIG_PATH, 'w') as f:
+                yaml.dump(config, f)
+
+            print("Config updated.")
+            self.publish_status({"config": "updated"})
+            self.publish_status({"config": self.config})
+            self.publish_camera_status()
+            self.publish_printer_status()
+
+        except Exception as e:
+            print(f"Config update error: {e}")
+            self.publish_status({"status": "error"})
+
+    def publish_status(self, extra={}):
+        data = {"status": extra.get("status", "idle")}
+        data.update(extra)
+        self.client.publish(self.topics["status"], json.dumps(data))
+        print(f"Published scanner status: {data}")
+
+    def publish_camera_status(self, extra={}):
+        data = {"status": extra.get("status", "idle")}
+        data.update(load_config()["camera"])
+        data.update(extra)
+        self.client.publish(self.topics["camera_status"], json.dumps(data))
+        print(f"Published camera status: {data}")
+
+    def publish_printer_status(self, extra={}):
+        data = {"status": extra.get("status", "idle")}
+        data.update(load_config()["printer"])
+        data.update(extra)
+        self.client.publish(self.topics["printer_status"], json.dumps(data))
+        print(f"Published printer status: {data}")
+
+    def loop_forever(self):
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("Stopping MQTT client...")
+            self.client.loop_stop()
+            self.client.disconnect()
+
+if __name__ == "__main__":
+    hsi = HSI_MQTT()
+    hsi.connect()
+    hsi.loop_forever()

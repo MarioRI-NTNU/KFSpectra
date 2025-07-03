@@ -1,0 +1,35 @@
+camera:
+  BITS_PER_PIXEL: 8
+  BLACK_LEVEL: 10
+  CAMERA_HEIGHT: 1088
+  CAMERA_WIDTH: 2048
+  DATA_DIR: data
+  EXPOSURE_TIME_MS: 200.0
+  MASTER_GAIN: 20
+mqtt:
+  broker: 172.26.45.193
+  port: 1883
+  topics:
+    camera_picture: cmd/gf/hs_camera/picture/req
+    camera_status: status/gf/hs_camera/camera_state
+    config_request: cmd/gf/hs_camera/config/req
+    config_response: dt/gf/hs_camera/config/res
+    printer_gcode: cmd/gf/hs_camera/printer_gcode/req
+    printer_status: status/gf/hs_camera/printer_state
+    scan_command: cmd/gf/hs_camera/scan/req
+    status: status/gf/hs_scanner/state
+printer:
+  BAUDRATE: 115200
+  DEFAULT_FEEDRATE: 600
+  DEVICE: /dev/ttyUSB0
+  EXTRUDER_TEMP: 200
+  STEPS_PER_MM: 80
+  TIMEOUT: 2
+  X_END: 400
+  X_STEP: 10.0
+  Z_END: 200
+  Z_STEP: 5.0
+ssh:
+  dest_folder: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/debug_pictures
+  server_ip: 172.26.45.193
+  user: kybfarm

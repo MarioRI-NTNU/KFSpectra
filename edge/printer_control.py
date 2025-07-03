@@ -1,27 +1,34 @@
 import sys
 import os
+import serial
+import time
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-import serial
-import time
-from utils import config
-
 class Printer:
-    def __init__(self, port=config.PRINTER_PORT, baudrate=config.PRINTER_BAUDRATE, timeout=config.SERIAL_TIMEOUT):
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
+    def __init__(self, printer_cfg):
+        """Initialize printer with config dictionary."""
+        self.update_config(printer_cfg)
         self.serial = None
+
+    def update_config(self, printer_cfg):
+        """Update printer config fields on the fly."""
+        self.device = printer_cfg["DEVICE"]
+        self.baudrate = printer_cfg.get("BAUDRATE", 115200)
+        self.timeout = printer_cfg.get("TIMEOUT", 2)
+        self.steps_per_mm = printer_cfg.get("STEPS_PER_MM", 80)
+        self.extruder_temp = printer_cfg.get("EXTRUDER_TEMP", 200)
+        self.default_feedrate = printer_cfg.get("DEFAULT_FEEDRATE", 1200)  # Added
 
     def connect(self):
         try:
-            self.serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+            self.serial = serial.Serial(self.device, self.baudrate, timeout=self.timeout)
             time.sleep(2)
 
             if self.serial.is_open:
-                print("Printer connected successfully.")
+                print(f"Printer connected on {self.device} at {self.baudrate} baud.")
             else:
                 raise Exception("Printer port opened but not active.")
 
@@ -42,7 +49,7 @@ class Printer:
                         raise Exception("Printer reported error state. Check if PSU is ON.")
 
             if not firmware_received:
-                print("Warning: Printer responded, but firmware information was not confirmed. Proceeding cautiously.")
+                print("Warning: Printer responded but firmware info was not confirmed. Proceeding cautiously.")
 
             print("Enabling motors...")
             self.serial.write(b'M17\n')
@@ -51,7 +58,7 @@ class Printer:
             print("Testing small X move...")
             self.serial.write(b'G91\n')
             time.sleep(0.1)
-            self.serial.write(b'G1 X1 F600\n')
+            self.serial.write(f'G1 X1 F{self.default_feedrate}\n'.encode())
             time.sleep(0.1)
             self.serial.write(b'G90\n')
 
@@ -98,7 +105,6 @@ class Printer:
                 if wait:
                     self.serial.write(b'M400\n')
                     time.sleep(0.1)
-
                     while True:
                         response = self.serial.readline().decode(errors='ignore').strip()
                         if response:
@@ -131,7 +137,10 @@ class Printer:
 
         raise Exception("Timeout waiting for printer to become ready.")
 
-    def move_to(self, x=None, z=None, feedrate=config.DEFAULT_FEEDRATE):
+    def move_to(self, x=None, z=None, feedrate=None):
+        if feedrate is None:
+            feedrate = self.default_feedrate
+
         cmd = "G1"
         if x is not None:
             cmd += f" X{x}"
@@ -156,7 +165,14 @@ class Printer:
             print("Printer disconnected")
 
 if __name__ == "__main__":
-    printer = Printer()
+    import yaml
+
+    CONFIG_PATH = os.path.join(BASE_DIR, 'edge', 'config.yaml')
+    with open(CONFIG_PATH, 'r') as f:
+        full_config = yaml.safe_load(f)
+    printer_cfg = full_config["printer"]
+
+    printer = Printer(printer_cfg)
     printer.connect()
 
     if printer.serial:

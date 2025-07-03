@@ -6,9 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.10.1",
+    "mqtt>=0.0.1",
     "numpy>=2.2.5",
     "opencv-python>=4.11.0.86",
+    "paho-mqtt>=2.1.0",
     "pyserial>=3.5",
     "pyueye>=4.96.952",
+    "pyyaml>=6.0.2",
     "spectral>=0.24",
 ]
