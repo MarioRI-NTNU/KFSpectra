@@ -1,9 +1,10 @@
 import sys
 import os
-
-from pyueye import ueye
 import numpy as np
 import cv2
+from ids_peak import ids_peak
+import ctypes
+
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
@@ -11,120 +12,130 @@ if BASE_DIR not in sys.path:
 
 class Camera:
     def __init__(self, camera_cfg):
-        self.hCam = ueye.HIDS(0)
         self.update_config(camera_cfg)
-
-        self.pcImageMemory = ueye.c_mem_p()
-        self.MemID = ueye.int()
+        ids_peak.Library.Initialize()
+        self.device_manager = ids_peak.DeviceManager.Instance()
+        self.device = None
+        self.datastream = None
+        self.nodemap = None
         self.initialized = False
 
     def update_config(self, camera_cfg):
-        """Update all camera parameters with a new config dictionary."""
-        self.exposure_time = camera_cfg["EXPOSURE_TIME_MS"]
+        self.exposure_time = camera_cfg["EXPOSURE_TIME_MS"] * 1000  # µs
         self.gain = camera_cfg["MASTER_GAIN"]
         self.width = camera_cfg["CAMERA_WIDTH"]
         self.height = camera_cfg["CAMERA_HEIGHT"]
-        self.bits_per_pixel = camera_cfg["BITS_PER_PIXEL"]
-        self.black_level = camera_cfg["BLACK_LEVEL"]
         self.data_dir = camera_cfg["DATA_DIR"]
+        self.binning_factor = camera_cfg.get("BINNING_FACTOR", 2)
+        self.roi_top = 248
+        self.roi_bottom = 803
 
     def connect(self):
-        ret = ueye.is_InitCamera(self.hCam, None)
-        if ret != ueye.IS_SUCCESS:
-            raise Exception("Failed to initialize camera.")
+        self.device_manager.Update()
+        if self.device_manager.Devices().empty():
+            raise Exception("No camera found!")
 
-        print(f"Camera connected with exposure={self.exposure_time}ms, gain={self.gain}, black_level={self.black_level}")
+        print(f"[INFO] Found device: {self.device_manager.Devices()[0].ModelName()}")
 
-        # Set pixel format: Mono8
-        ueye.is_SetColorMode(self.hCam, ueye.IS_CM_MONO8)
+        self.device = self.device_manager.Devices()[0].OpenDevice(ids_peak.DeviceAccessType_Control)
+        self.datastream = self.device.DataStreams()[0].OpenDataStream()
+        self.nodemap = self.device.RemoteDevice().NodeMaps()[0]
 
-        # Set exposure time
-        exposure_param = ueye.c_double(self.exposure_time)
-        ueye.is_Exposure(self.hCam, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, exposure_param, 8)
+        # Configure
+        self.nodemap.FindNode("ExposureTime").SetValue(self.exposure_time)
+        self.nodemap.FindNode("Gain").SetValue(self.gain)
 
-        # Set gain
-        ueye.is_SetHardwareGain(self.hCam, self.gain, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER, ueye.IS_IGNORE_PARAMETER)
+        width = int(self.nodemap.FindNode("Width").Value())
+        height = int(self.nodemap.FindNode("Height").Value())
+        bpp = 1  # Mono8 pixel
+        payload_size = width * height * bpp
 
-        # Set black level
-        ueye.is_Blacklevel(self.hCam, ueye.IS_BLACKLEVEL_CMD_SET_OFFSET, ueye.c_int(self.black_level), 4)
+        print(f"[INFO] Config: Exposure={self.exposure_time} µs Gain={self.gain} → Frame {width}x{height}")
 
-        # Disable auto features
-        ueye.is_SetAutoParameter(self.hCam, ueye.IS_SET_ENABLE_AUTO_GAIN, ueye.DOUBLE(0), ueye.DOUBLE(0))
-        ueye.is_SetAutoParameter(self.hCam, ueye.IS_SET_ENABLE_AUTO_SHUTTER, ueye.DOUBLE(0), ueye.DOUBLE(0))
+        # Announce & queue buffers
+        self.buffers = []
+        for _ in range(5):
+            buffer = self.datastream.AllocAndAnnounceBuffer(payload_size)
+            self.buffers.append(buffer)
+            self.datastream.QueueBuffer(buffer)
 
-        # Allocate memory for image
-        ueye.is_AllocImageMem(self.hCam, self.width, self.height, self.bits_per_pixel, self.pcImageMemory, self.MemID)
-        ueye.is_SetImageMem(self.hCam, self.pcImageMemory, self.MemID)
+       # Start acquisition
+        self.datastream.StartAcquisition()
+        self.nodemap.FindNode("AcquisitionStart").Execute()
 
-        # Start video capture
-        ueye.is_CaptureVideo(self.hCam, ueye.IS_WAIT)
 
         self.initialized = True
-        print("Video capture started — camera ready.")
+        print("[INFO] Acquisition started — ready to capture.\n")
 
     def capture_frame(self):
         if not self.initialized:
-            raise Exception("Camera not initialized.")
+            raise Exception("Camera not initialized!")
 
-        imageData = ueye.get_data(
-            self.pcImageMemory,
-            self.width,
-            self.height,
-            self.bits_per_pixel,
-            self.width,
-            True
-        )
-        image = np.reshape(imageData, (self.height, self.width))
+        buffer = self.datastream.WaitForFinishedBuffer(5000)
+        width = buffer.Width()
+        height = buffer.Height()
 
-        # Normalize contrast
-        image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
+        import ctypes
+        buf_ptr = int(buffer.BasePtr())  # Correctly convert to int!
+        ptr = ctypes.cast(buf_ptr, ctypes.POINTER(ctypes.c_ubyte))
+        img_array = np.ctypeslib.as_array(ptr, shape=(height, width))
+        img_copy = np.copy(img_array)
 
-        # Flip horizontally
-        image = cv2.flip(image, 1)
+        self.datastream.QueueBuffer(buffer)
 
-        return image
+        print(f"[INFO] Frame shape: {img_copy.shape} dtype: {img_copy.dtype} mean: {np.mean(img_copy):.2f}")
+        return img_copy
 
-    def save_frame(self, filename="debug_picture.png"):
+
+
+    def bin_image(self, image):
+        factor = self.binning_factor  # 8
+        h, w = image.shape
+        new_w = w // factor
+        image = image[:, :new_w * factor]  # Trim width to multiple of factor
+        binned = image.reshape(h, new_w, factor).mean(axis=2)
+        return binned.astype(np.uint8)
+
+
+    def crop_roi(self, image):
+        return image[self.roi_top:self.roi_bottom, :]
+
+    def save_frame(self, file_name="debug_picture.png"):
         frame = self.capture_frame()
-        os.makedirs(self.data_dir, exist_ok=True)
-        full_path = os.path.join(self.data_dir, filename)
-        cv2.imwrite(full_path, frame)
-        print(f"Image saved at {full_path}")
+        cropped = self.crop_roi(frame)
+        binned = self.bin_image(cropped)
+
+        out_dir = os.path.abspath(os.path.join(BASE_DIR, self.data_dir))
+        os.makedirs(out_dir, exist_ok=True)
+
+        output_path = os.path.join(out_dir, f"{file_name}")
+        cv2.imwrite(output_path, binned)
+        print(f"[INFO] Final saved frame shape: {cropped.shape} → binned shape: {binned.shape}")
+
+
+        os.sync()
+
 
     def disconnect(self):
         if self.initialized:
-            ueye.is_FreeImageMem(self.hCam, self.pcImageMemory, self.MemID)
-            ueye.is_ExitCamera(self.hCam)
+            self.nodemap.FindNode("AcquisitionStop").Execute()
+            self.datastream.StopAcquisition()
+            ids_peak.Library.Close()
             self.initialized = False
-            print("Camera disconnected and resources released.")
+            print("[INFO] Camera disconnected cleanly.")
 
 if __name__ == "__main__":
     import yaml
 
-    # Example manual load for testing standalone:
     CONFIG_PATH = os.path.join(BASE_DIR, 'edge', 'config.yaml')
     with open(CONFIG_PATH, 'r') as f:
         full_config = yaml.safe_load(f)
     camera_cfg = full_config["camera"]
 
     cam = Camera(camera_cfg)
+
     try:
         cam.connect()
-        print("Press 'q' to exit, 's' to save an image.")
-
-        save_counter = 1
-        while True:
-            frame = cam.capture_frame()
-            cv2.imshow("Live Feed", frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord('s'):
-                filename = f"captured_frame_{save_counter}.png"
-                cam.save_frame(filename)
-                save_counter += 1
-
-        cv2.destroyAllWindows()
+        cam.save_frame()
     finally:
         cam.disconnect()
