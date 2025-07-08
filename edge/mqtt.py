@@ -113,7 +113,7 @@ class HSI_MQTT:
 
             for z in range(0, int(z_end), int(z_step)):
                 for x in range(0, int(x_end), int(x_step)):
-                    self.printer.move_to(x=x, z=z)
+                    self.printer.move_to(x=x)
                     time.sleep(0.2)
                     filename = f"frame_X{x}_Z{z}.png"
                     self.cam.save_frame(os.path.join(output_dir, filename))
@@ -122,6 +122,7 @@ class HSI_MQTT:
                         "current_x": x,
                         "current_z": z
                     })
+                self.printer.move_to(z=z)
 
             self.cam.disconnect()
             self.printer.disconnect()

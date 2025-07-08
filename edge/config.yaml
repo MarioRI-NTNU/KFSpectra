@@ -21,14 +21,14 @@ mqtt:
 printer:
   BAUDRATE: 115200
   DEFAULT_FEEDRATE: 600
-  DEVICE: /dev/ttyACM0
+  DEVICE: /dev/ttyACM1
   EXTRUDER_TEMP: 200
   STEPS_PER_MM: 80
   TIMEOUT: 2
-  X_END: 400
-  X_STEP: 10.0
-  Z_END: 200
-  Z_STEP: 5.0
+  X_END: 100
+  X_STEP: 36.0
+  Z_END: 100
+  Z_STEP: 3.0
 ssh:
   dest_folder: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/debug_pictures
   server_ip: 172.26.45.193

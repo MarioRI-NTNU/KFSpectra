@@ -151,10 +151,13 @@ class Printer:
 
     def home(self):
         self.send_gcode("G1 Z15", wait=True)
+        self.send_gcode("G28 Y0", wait=True)
+        self.send_gcode("M420 S0", wait=True)
         print("Homing X...")
         self.send_gcode("G28 X0", wait=True)
         print("Homing Z...")
         self.send_gcode("G28 Z0", wait=True)
+        self.send_gcode("G92 X0 Y0 Z0", wait=False)
         self.send_gcode("G90", wait=False)
         print("Printer homed!")
 
