@@ -29,6 +29,8 @@ printer:
   X_STEP: 36.0
   Z_END: 100
   Z_STEP: 3.0
+  X_START: 0
+  Z_START: 0
 ssh:
   dest_folder: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/debug_pictures
   dest_folder_scan: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/scanner_data
