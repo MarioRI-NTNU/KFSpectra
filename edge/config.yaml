@@ -31,5 +31,6 @@ printer:
   Z_STEP: 3.0
 ssh:
   dest_folder: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/debug_pictures
+  dest_folder_scan: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/scanner_data
   server_ip: 172.26.45.193
   user: kybfarm

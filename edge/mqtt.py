@@ -84,63 +84,49 @@ class HSI_MQTT:
             os.remove(tb)
 
     def handle_scan_command(self, payload):
-        print("Starting scan routine...\n")
+        print("Starting FAKE scan routine (re-using previous scan folder)...\n")
         self.publish_status({"status": "scanning"})
 
         try:
-            # Reload config fresh for scan operation
             config = load_config()
-            printer_cfg = config["printer"]
-            camera_cfg = config["camera"]
+            ssh_cfg = config["ssh"]
 
-            # Re-instantiate printer and camera with fresh config
-            self.printer = Printer(printer_cfg)
-            self.cam = Camera(camera_cfg)
+            # Path PREVIOUS scan folder
+            reuse_scan_name = "scan_30April_17:40:21"
+            reuse_scan_dir = os.path.join(BASE_DIR, "data", reuse_scan_name)
 
-            x_step = printer_cfg["X_STEP"]
-            x_end = printer_cfg["X_END"]
-            z_step = printer_cfg["Z_STEP"]
-            z_end = printer_cfg["Z_END"]
+            if not os.path.exists(reuse_scan_dir):
+                raise Exception(f"Cannot find {reuse_scan_dir} — did you delete it?")
 
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = os.path.join(BASE_DIR, "data", f"scan_{timestamp}")
-            os.makedirs(output_dir, exist_ok=True)
+            print(f"Using existing scan folder: {reuse_scan_dir}")
 
-            self.printer.connect()
-            self.printer.home()
+            # Tarball output for upload (optional — or you can SCP the folder directly)
+            tarball = f"{reuse_scan_dir}.tar.gz"
+            subprocess.run(
+                ["tar", "-czf", tarball, "-C", os.path.dirname(reuse_scan_dir), reuse_scan_name],
+                check=True
+            )
+            print(f"Created tarball: {tarball}\n")
 
-            self.cam.connect()
-
-            for z in range(0, int(z_end), int(z_step)):
-                for x in range(0, int(x_end), int(x_step)):
-                    self.printer.move_to(x=x)
-                    time.sleep(0.2)
-                    filename = f"frame_X{x}_Z{z}.png"
-                    self.cam.save_frame(os.path.join(output_dir, filename))
-
-                    self.publish_printer_status({
-                        "current_x": x,
-                        "current_z": z
-                    })
-                self.printer.move_to(z=z)
-
-            self.cam.disconnect()
-            self.printer.disconnect()
-
-            # Tarball output dir
-            tarball = f"{output_dir}.tar.gz"
-            subprocess.run(["tar", "-czf", tarball, "-C", os.path.dirname(output_dir), os.path.basename(output_dir)])
-            print(f"Scan output tarball: {tarball}")
+            # SCP push to the server destination for scans
+            scp_cmd = [
+                "scp",
+                tarball,
+                f"{ssh_cfg['user']}@{ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}/"
+            ]
+            print(f"Running SCP command: {' '.join(scp_cmd)}\n")
+            subprocess.run(scp_cmd, check=True)
+            print(f"Scan tarball sent to {ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}\n")
 
             self.publish_status({
                 "status": "idle",
                 "scan_tarball": tarball
             })
-            self.cleanup_old_scans(os.path.join(BASE_DIR, "data"))
 
         except Exception as e:
-            print(f"Scan error: {e}\n")
+            print(f"[ERROR] Fake scan push failed: {e}\n")
             self.publish_status({"status": "error"})
+
 
     def handle_camera_picture(self, payload):
         print("Taking debug camera picture...")
