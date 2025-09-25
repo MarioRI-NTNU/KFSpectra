@@ -35,6 +35,11 @@ class HSI_MQTT:
         # Initialize camera and printer with initial config (can be reloaded later)
         self.printer = Printer(self.config["printer"])
         self.cam = Camera(self.config["camera"])
+        
+        #Avoid resetting for each command. 
+        self.printer.connect()
+        #Home once - known reference point
+        #self.printer.home()
 
     def connect(self):
         self.client.on_connect = self.on_connect
@@ -84,50 +89,111 @@ class HSI_MQTT:
             os.remove(tb)
 
     def handle_scan_command(self, payload):
-        print("Starting FAKE scan routine (re-using previous scan folder)...\n")
+        config = load_config()
+        ssh_cfg = config["ssh"]
+        camera_cfg = config["camera"]
+        printer_cfg = config["printer"]
+
+        self.printer = Printer(printer_cfg)
+        self.cam = Camera(camera_cfg)
+
+        print("Starting scan...\n")
         self.publish_status({"status": "scanning"})
 
+        scan_folder = None  
+
         try:
-            config = load_config()
-            ssh_cfg = config["ssh"]
+            self.printer.connect()
+            if not self.printer.serial:
+                print("Printer connection failed. Exiting.")
+                self.publish_status({"status": "error"})
+                return
 
-            # Path PREVIOUS scan folder
-            reuse_scan_name = "scan_30April_17:40:21"
-            reuse_scan_dir = os.path.join(BASE_DIR, "data", reuse_scan_name)
+            self.cam.connect()
 
-            if not os.path.exists(reuse_scan_dir):
-                raise Exception(f"Cannot find {reuse_scan_dir} — did you delete it?")
+            # Home printer
+            self.printer.home()
 
-            print(f"Using existing scan folder: {reuse_scan_dir}")
+            # Scan parameters
+            start_x = printer_cfg["X_START"]
+            end_x = printer_cfg["X_END"]
+            start_z = printer_cfg["Z_START"]
+            end_z = printer_cfg["Z_END"]
+            step_size_x = printer_cfg["X_STEP"]
+            step_size_z = printer_cfg["Z_STEP"]
 
-            # Tarball output for upload (optional — or you can SCP the folder directly)
-            tarball = f"{reuse_scan_dir}.tar.gz"
-            subprocess.run(
-                ["tar", "-czf", tarball, "-C", os.path.dirname(reuse_scan_dir), reuse_scan_name],
-                check=True
-            )
-            print(f"Created tarball: {tarball}\n")
+            # Create scan folder
+            scan_time = time.strftime("%d%B_%H:%M:%S")
+            scan_folder = os.path.join(os.getcwd(), "data", f"scan_{scan_time}")
+            os.makedirs(scan_folder, exist_ok=True)
+            print(f"Saving scan data to: {scan_folder}")
 
-            # SCP push to the server destination for scans
-            scp_cmd = [
-                "scp",
-                tarball,
-                f"{ssh_cfg['user']}@{ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}/"
-            ]
-            print(f"Running SCP command: {' '.join(scp_cmd)}\n")
-            subprocess.run(scp_cmd, check=True)
-            print(f"Scan tarball sent to {ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}\n")
+            # Move to starting point
+            self.printer.move_to(x=start_x, z=start_z)
+            time.sleep(0.5)
 
-            self.publish_status({
-                "status": "idle",
-                "scan_tarball": tarball
-            })
+            print("Starting full 2D scan...")
+            direction = 1
+
+            for z in np.arange(start_z, end_z + 0.001, step_size_z):
+                self.printer.move_to(z=z)
+                time.sleep(0.5)
+
+                x_positions = (
+                    np.arange(start_x, end_x + 0.001, step_size_x)
+                    if direction == 1
+                    else np.arange(end_x, start_x - 0.001, -step_size_x)
+                )
+
+                for x in x_positions:
+                    print(f"Capturing frame at X={x:.2f} mm, Z={z:.2f} mm")
+                    self.printer.move_to(x=x)
+                    time.sleep(0.5)
+
+                    filename = f"X{int(x*10):03}_Z{int(z*10):03}.png"
+                    full_path = os.path.join(scan_folder, filename)
+                    self.cam.save_frame(full_path)
+
+                direction *= -1
+
+            print("Full 2D scan completed successfully.")
+            self.publish_status({"status": "idle"})
 
         except Exception as e:
-            print(f"[ERROR] Fake scan push failed: {e}\n")
+            print(f"[ERROR] scan failed: {e}\n")
             self.publish_status({"status": "error"})
+            return  # prevents accessing undefined scan_folder
 
+        # Only run these if scan was successful
+        if scan_folder:
+            try:
+                tarball = f"{scan_folder}.tar.gz"
+                subprocess.run(
+                    ["tar", "-czf", tarball, "-C", os.path.dirname(scan_folder), os.path.basename(scan_folder)],
+                    check=True
+                )
+                print(f"Created tarball: {tarball}\n")
 
+                # SCP transfer
+                scp_cmd = [
+                    "scp",
+                    tarball,
+                    f"{ssh_cfg['user']}@{ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}/"
+                ]
+                print(f"Running SCP command: {' '.join(scp_cmd)}\n")
+                subprocess.run(scp_cmd, check=True)
+                print(f"Scan tarball sent to {ssh_cfg['server_ip']}:{ssh_cfg['dest_folder_scan']}\n")
+
+                self.publish_status({
+                    "status": "idle",
+                    "scan_tarball": tarball
+                })
+
+            except Exception as e:
+                print(f"[ERROR] packaging or transfer failed: {e}\n")
+                self.publish_status({"status": "error"})
+
+        
     def handle_camera_picture(self, payload):
         print("Taking debug camera picture...")
 
@@ -179,18 +245,33 @@ class HSI_MQTT:
     def handle_printer_gcode(self, payload):
         print("Running printer GCode...\n")
         try:
-            config = load_config()
-            printer_cfg = config["printer"]
-            self.printer = Printer(printer_cfg)
-
             cmd = payload.get("gcode")
-            if not cmd:
-                print("No GCode provided.\n")
+            if not cmd: 
+                print("No GCode provided. \n")
                 return
+            #config = load_config()
+            #printer_cfg = config["printer"]
+            #self.printer = Printer(printer_cfg)
+            #cmd = payload.get("gcode")
+            #if not cmd:
+            #    print("No GCode provided.\n")
+            #    return
 
-            self.printer.connect()
-            self.printer.send_gcode(cmd, wait=True)
-            self.printer.disconnect()
+            #only do this if we have a closed connection
+            if not self.printer.serial or not self.printer.serial.is_open:
+                self.printer.connect() 
+                
+            #self.printer.connect()
+            #self.printer.send_gcode(cmd, wait=True)
+            #self.printer.disconnect()
+
+            #self.publish_printer_status({"last_gcode": cmd})
+
+            # valgfri "home"-alias
+            if cmd.strip().upper() in ("HOME", "G28", "G28 X0 Z0"):
+                self.printer.home()
+            else:
+                self.printer.send_gcode(cmd, wait=True)
 
             self.publish_printer_status({"last_gcode": cmd})
 

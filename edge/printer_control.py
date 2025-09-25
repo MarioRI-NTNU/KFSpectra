@@ -141,6 +141,8 @@ class Printer:
         if feedrate is None:
             feedrate = self.default_feedrate
 
+        self.send_gcode("G90")
+        
         cmd = "G1"
         if x is not None:
             cmd += f" X{x}"
@@ -150,16 +152,12 @@ class Printer:
         self.send_gcode(cmd, wait=True)
 
     def home(self):
-        self.send_gcode("G1 Z15", wait=True)
-        self.send_gcode("G28 Y0", wait=True)
-        self.send_gcode("M420 S0", wait=True)
-        print("Homing X...")
-        self.send_gcode("G28 X0", wait=True)
-        print("Homing Z...")
-        self.send_gcode("G28 Z0", wait=True)
-        self.send_gcode("G92 X0 Y0 Z0", wait=False)
-        self.send_gcode("G90", wait=False)
+        #self.send_gcode("G90", wait=False)
+        self.send_gcode("G1 X0 Z0", wait=True)
+        #self.send_gcode("M420 S0", wait=True)  # Try commenting out
+        #self.send_gcode("M501", wait=True)     # Try commenting out
         print("Printer homed!")
+
 
     def disconnect(self):
         if self.serial:
