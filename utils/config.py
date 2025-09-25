@@ -41,10 +41,10 @@ CROP_X_END = CAMERA_WIDTH
 # -------------------------
 # Scanning Settings
 # -------------------------
-SCAN_START_X = 100
-SCAN_END_X = 100
-SCAN_START_Z = 20
-SCAN_END_Z = 80
+SCAN_START_X = 0
+SCAN_END_X = 225
+SCAN_START_Z = 0
+SCAN_END_Z = 190
 STEP_SIZE_X = 10
 STEP_SIZE_Z = 0.2
 PAUSE_AFTER_MOVE = 0.5  # seconds
