@@ -2,7 +2,7 @@ import sys
 import os
 import warnings
 import time
-import numpy as np
+import numpy
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -17,6 +17,7 @@ from utils import config
 def main():
     printer = Printer()
     camera = Camera()
+    print("Starting - try - now")
 
     try:
         printer.connect()
@@ -28,6 +29,8 @@ def main():
 
         # Home printer
         printer.home()
+        printer.disconnect()
+        printer.connect()
 
         # Scan parameters
         start_x = config.SCAN_START_X
@@ -50,14 +53,14 @@ def main():
         print("Starting full 2D scan...")
         direction = 1
 
-        for z in np.arange(start_z, end_z + 0.001, step_size_z):
+        for z in numpy.arange(start_z, end_z + 0.001, step_size_z):
             printer.move_to(z=z)
             time.sleep(config.PAUSE_AFTER_MOVE)
 
             x_positions = (
-                np.arange(start_x, end_x + 0.001, step_size_x)
+                numpy.arange(start_x, end_x + 0.001, step_size_x)
                 if direction == 1
-                else np.arange(end_x, start_x - 0.001, -step_size_x)
+                else numpy.arange(end_x, start_x - 0.001, -step_size_x)
             )
 
             for x in x_positions:

@@ -153,6 +153,8 @@ class Printer:
 
     def home(self):
         #self.send_gcode("G90", wait=False)
+        self.send_gcode("G28 X Z", wait=True)  # Home X and Z axes using endstops
+        print("Actually homes - w. G28")
         self.send_gcode("G1 X0 Z0", wait=True)
         #self.send_gcode("M420 S0", wait=True)  # Try commenting out
         #self.send_gcode("M501", wait=True)     # Try commenting out

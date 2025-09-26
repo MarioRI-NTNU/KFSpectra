@@ -25,11 +25,11 @@ printer:
   EXTRUDER_TEMP: 200
   STEPS_PER_MM: 80
   TIMEOUT: 2
-  X_END: 400
-  X_START: 0
+  X_END: 225
+  X_START: 5
   X_STEP: 5.0
-  Z_END: 200
-  Z_START: 0
+  Z_END: 190
+  Z_START: 5
   Z_STEP: 5.0
 ssh:
   dest_folder: /home/kybfarm/kybfarm/server/homeassistant/config/HSI/debug_pictures

@@ -6,6 +6,7 @@ import time
 import datetime
 import glob
 import subprocess
+import numpy as np
 
 import paho.mqtt.client as mqtt
 import cv2
@@ -93,7 +94,7 @@ class HSI_MQTT:
         ssh_cfg = config["ssh"]
         camera_cfg = config["camera"]
         printer_cfg = config["printer"]
-
+        #Look into this 
         self.printer = Printer(printer_cfg)
         self.cam = Camera(camera_cfg)
 
@@ -113,6 +114,9 @@ class HSI_MQTT:
 
             # Home printer
             self.printer.home()
+            time.sleep(15)
+            self.printer.disconnect()
+            self.printer.connect()
 
             # Scan parameters
             start_x = printer_cfg["X_START"]
