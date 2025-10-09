@@ -95,8 +95,8 @@ class HSI_MQTT:
         camera_cfg = config["camera"]
         printer_cfg = config["printer"]
         #Look into this 
-        self.printer = Printer(printer_cfg)
-        self.cam = Camera(camera_cfg)
+        #self.printer = Printer(printer_cfg)
+        #self.cam = Camera(camera_cfg)
 
         print("Starting scan...\n")
         self.publish_status({"status": "scanning"})
@@ -115,6 +115,7 @@ class HSI_MQTT:
             # Home printer
             self.printer.home()
             time.sleep(15)
+            #Do i need to disconnect and connect? No dont think so 
             self.printer.disconnect()
             self.printer.connect()
 
@@ -162,7 +163,8 @@ class HSI_MQTT:
 
             print("Full 2D scan completed successfully.")
             self.publish_status({"status": "idle"})
-
+            self.printer.home()
+            
         except Exception as e:
             print(f"[ERROR] scan failed: {e}\n")
             self.publish_status({"status": "error"})
