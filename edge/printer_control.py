@@ -156,7 +156,7 @@ class Printer:
         self.send_gcode("G28 X Z", wait=True)  # Home X and Z axes using endstops
         self.send_gcode("G1 X0 Z0", wait=True)
         print("Restarting to not crash!")
-        time.sleep(15)
+        time.sleep(30)
         self.disconnect()
         self.connect()
 
