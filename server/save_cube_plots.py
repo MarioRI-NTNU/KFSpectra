@@ -52,4 +52,4 @@ def save_single_band(cube, band_idx, output_path):
 def save_pixel_spectrum(cube, x, y, output_path):
     spectrum = cube[y, x, :]
     bands = np.arange(spectrum.shape[0])
-    plt.plot(
+    plt.plot()
