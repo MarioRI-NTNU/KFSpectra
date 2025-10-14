@@ -3,7 +3,9 @@ import numpy as np
 import cv2
 
 # Paths
-DATA_DIR = "/home/kybfarm/kybfarm/server/homeassistant/config/HSI/scanner_data"
+#DATA_DIR = "/home/kybfarm/kybfarm/server/homeassistant/config/HSI/scanner_data"
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DATA_DIR = os.path.join(BASE_DIR, "edge", "data")
 
 print(f"Looking for scans in: {DATA_DIR}")
 
