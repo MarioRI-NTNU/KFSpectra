@@ -9,7 +9,10 @@ from SpectralTools import (
     calculate_ndvi,        # bruker (H, W, B)
     plot_pixel_spectrum,   # viser spekter
     show_band,             # viser enkeltbånd
+    calculate_nir_red_indices,  #Calculates NIR and RED indices
 )
+
+
 
 #Paths to input and output directories
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -28,7 +31,7 @@ cube_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
 cube = np.load(cube_path)["cube"]      # din produksjon: (Y, W, X)
 # Gjør om til (H, W, B) = (Y, X, Bands) som funksjonene dine forventer:
 cube = np.transpose(cube, (0, 2, 1))
-H, W, B = cube.shape
+H, W, B = cube.shape 
 print(f"Cube: {cube.shape}  -> saving to {OUTPUT_DIR}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 #Test:
@@ -83,20 +86,34 @@ def save_ndvi_png(cube, red_idx, nir_idx, out_path):
     plt.close()
     print(f"✅ NDVI -> {out_path}")
 
+
+
+
 # --- kjør ---
 save_single_band(cube, band_idx, os.path.join(OUTPUT_DIR, f"band_{band_idx}.png"))
-save_pixel_spectrum(cube, x, y, os.path.join(OUTPUT_DIR, f"spectrum_x{x}_y{y}.png"))
-save_ndvi_png(cube, red_idx, nir_idx, os.path.join(OUTPUT_DIR, f"ndvi_r{red_idx}_n{nir_idx}.png"))
+#save_pixel_spectrum(cube, x, y, os.path.join(OUTPUT_DIR, f"spectrum_x{x}_y{y}.png"))
+#save_ndvi_png(cube, red_idx, nir_idx, os.path.join(OUTPUT_DIR, f"ndvi_r{red_idx}_n{nir_idx}.png"))
 
-# (valgfritt) rask RGB-preview
-wavs = np.linspace(400, 800, B)
+red_idx, nir_idx = calculate_nir_red_indices(cube)
+ndvi = calculate_ndvi(cube, red_idx, nir_idx)
+
+
+
+H, W, B = cube.shape
+wavs = np.linspace(400, 800, B)  # antatt spekter i nm
+
+print(f"Cube shape: {cube.shape}")
 r_i = int(np.argmin(np.abs(wavs-650)))
 g_i = int(np.argmin(np.abs(wavs-550)))
 b_i = int(np.argmin(np.abs(wavs-450)))
 rgb = np.stack([cube[:,:,r_i], cube[:,:,g_i], cube[:,:,b_i]], axis=-1).astype(np.float32)
-lo, hi = np.percentile(rgb, 1), np.percentile(rgb, 99)
-rgb = np.clip((rgb - lo)/(hi - lo + 1e-6), 0, 1)
-plt.figure(figsize=(6,5)); plt.imshow(rgb); plt.axis("off"); plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "preview_rgb.png"), dpi=200); plt.close()
-print("Done.")
-
+lo, hi = np.percentile(rgb, (1, 99))
+rgb = np.clip((rgb - lo) / (hi - lo), 0, 1)
+plt.figure(figsize=(8, 5))
+plt.imshow(rgb)
+plt.axis("off")
+plt.title("Pseudo-RGB from hyperspectral cube")
+out = os.path.join(OUTPUT_DIR, "preview_rgb.png")
+plt.savefig(out, dpi=200, bbox_inches="tight")
+plt.close()
+print("✅ saved:", out)
