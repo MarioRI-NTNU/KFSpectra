@@ -90,9 +90,9 @@ def save_ndvi_png(cube, red_idx, nir_idx, out_path):
 
 
 # --- kjør ---
-save_single_band(cube, band_idx, os.path.join(OUTPUT_DIR, f"band_{band_idx}.png"))
+#save_single_band(cube, band_idx, os.path.join(OUTPUT_DIR, f"band_{band_idx}.png"))
 #save_pixel_spectrum(cube, x, y, os.path.join(OUTPUT_DIR, f"spectrum_x{x}_y{y}.png"))
-#save_ndvi_png(cube, red_idx, nir_idx, os.path.join(OUTPUT_DIR, f"ndvi_r{red_idx}_n{nir_idx}.png"))
+save_ndvi_png(cube, red_idx, nir_idx, os.path.join(OUTPUT_DIR, f"ndvi_r{red_idx}_n{nir_idx}.png"))
 
 red_idx, nir_idx = calculate_nir_red_indices(cube)
 ndvi = calculate_ndvi(cube, red_idx, nir_idx)

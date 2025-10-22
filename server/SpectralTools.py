@@ -98,3 +98,4 @@ def show_band(cube: np.ndarray, band_idx: int, wavelength=None):
     plt.colorbar(label='Intensity')
     plt.tight_layout()
     plt.show()
+
