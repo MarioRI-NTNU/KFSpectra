@@ -6,6 +6,7 @@ camera:
   DATA_DIR: data
   EXPOSURE_TIME_MS: 90
   MASTER_GAIN: 6
+  BINNING_FACTOR: 8
 mqtt:
   broker: 172.26.45.193
   port: 1883

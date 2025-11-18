@@ -325,22 +325,15 @@ def reconstruct_rgb_image(cube):
 #y_middle = H // 2
 #visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
 
-
-rgb_image = reconstruct_rgb_image(cube)  # (Z, X, Y, 3)
-
-Zc, Xc, Yc, _ = rgb_image.shape
-
-# Slå sammen Z og Y til én vertikal akse: (Z*Y, X, 3)
-rgb_flat = rgb_image.reshape(Zc * Yc, Xc, 3)
-
-rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb_flat.png")
-plt.imsave(rgb_image_path, rgb_flat)
-print(f"✅ Saved flat RGB image to: {rgb_image_path}")
-
+rgb_image = reconstruct_rgb_image(cube)
 # Velg én Y-slice (f.eks. midten)
-#y_mid = H // 2
-#rgb_slice = rgb_image[:, :, y_mid, :]  # (Z, X, 3)
+y_mid = H // 2
+rgb_slice = rgb_image[:, :, y_mid, :]  # (Z, X, 3)
 
+# Lagre
+rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
+plt.imsave(rgb_image_path, rgb_slice)
+print(f"✅ Saved RGB image to: {rgb_image_path}")
 
 # Test for å sjekke spekter
 z_sel = 20
