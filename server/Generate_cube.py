@@ -4,12 +4,19 @@ import cv2
 from collections import defaultdict
 import matplotlib.pyplot as plt
 
+from cube_visuals import (
+    visualise_spectrum_at,
+    visualise_wavelength_slice,
+    reconstruct_rgb_image,
+)
+
 # ----------------- CONFIG -----------------
 start_nm      = 400.0
 end_nm        = 800.0
 SHIFT         = -5 
 BASE_DIR      = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR      = os.path.join(BASE_DIR, "edge", "data")
+
 # -------------------------------------------
 
 def find_last_modified_folder(data_dir=DATA_DIR, prefix="scan_"):
@@ -207,105 +214,6 @@ def crop_valid_overlap(shifted):
     xs = slice(left, right) # Valid X range
     return shifted[:, xs, :, :], xs # Return cropped cube and X slice
 
-def visualise_spectrum_at(cube, z, x, y):
-    """
-    Visualize spectrum from a specific position and row.
-    
-    Parameters:
-        cube: CubeNM object with shape (Z, X, Y, W)
-        z: Z position
-        x: X position  
-        y: Y position (row number in the image)
-    """
-    spec = cube[z, x, y, :]  # One spectrum from a specific (Z, X, Y)
-    print(f"Cube shape: {cube.shape}")
-    print(f"Spectrum at Z={z}, X={x}, Y={y}:")
-    
-    plt.figure(figsize=(10, 6))
-    plt.plot(cube.wavs_nm, spec, label=f'Z={z}, X={x}, Y-row={y}')
-    plt.xlabel("Wavelength (nm)")
-    plt.ylabel("Intensity")
-    plt.title(f"Spectrum at position (Z={z}, X={x}, Y={y})")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-def visualise_wavelength_slice(cube, wavelength_nm, out_path):
-    """
-    Visualize a single wavelength slice from the cube and save as PNG.
-
-    Parameters:
-        cube: CubeNM object with shape (Z, X, Y, W).
-        wavelength_nm: Wavelength in nanometers to visualize.
-        out_path: Output file path for the PNG image.
-    """
-    # Get 3D slice (Z, X, Y) at the requested wavelength.
-    slice_3d = cube[:, :, :, wavelength_nm]   # shape: (Z, X, Y)
-
-    # Aggregate over Y to get a 2D image (Z, X)
-    img = slice_3d.mean(axis=2)               # shape: (Z, X)
-
-    # Normalize for visualization
-    lo, hi = np.percentile(img, (1, 99))
-    img_n = np.clip((img - lo) / (hi - lo + 1e-6), 0, 1)
-
-    # Plot and save
-    plt.figure(figsize=(8, 6))
-    plt.imshow(img_n, cmap="gray", aspect='auto')
-    plt.xlabel("X position")
-    plt.ylabel("Z position")
-    plt.title(f"Slice of cube at wavelength: {float(wavelength_nm):.1f} nm")
-    plt.colorbar(label="Normalized intensity")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
-    plt.close()
-    print(f"Wavelength ~{float(wavelength_nm):.1f} nm -> {out_path}")
-    
-def reconstruct_rgb_image(cube):
-    """
-    Reconstruct an RGB image from the cube using specific wavelengths for R, G, B.
-
-    Parameters:
-        cube: CubeNM object with shape (Z, X, Y, W)
-    """
-# Define the target wavelengths for R, G, B channels
-    r_wavelength = 620  # Red channel (620 nm)
-    g_wavelength = 520  # Green channel (540 nm)
-    b_wavelength = 460  # Blue channel (460 nm)
-
-    # ✅ Find indices for these wavelengths
-    r_idx = int(np.searchsorted(cube.wavs_nm, r_wavelength))
-    g_idx = int(np.searchsorted(cube.wavs_nm, g_wavelength))
-    b_idx = int(np.searchsorted(cube.wavs_nm, b_wavelength))
-    
-    print(f"RGB wavelengths: R={cube.wavs_nm[r_idx]:.1f}nm, G={cube.wavs_nm[g_idx]:.1f}nm, B={cube.wavs_nm[b_idx]:.1f}nm")
-
-    # ✅ Extract channels using raw numpy array (not CubeNM wrapper)
-    r_channel = cube.data[:, :, :, r_idx]  # (Z, X, Y)
-    g_channel = cube.data[:, :, :, g_idx]  # (Z, X, Y)
-    b_channel = cube.data[:, :, :, b_idx]  # (Z, X, Y)
-
-    # Normalize each channel to 0-1 range
-    def normalize_channel(ch):
-        ch_min, ch_max = ch.min(), ch.max()
-        if ch_max > ch_min:
-            return (ch - ch_min) / (ch_max - ch_min)
-        return ch
-    
-    r_norm = normalize_channel(r_channel)
-    g_norm = normalize_channel(g_channel)
-    b_norm = normalize_channel(b_channel)
-
-    # Stack the channels to create an RGB image
-    rgb_image = np.stack([r_norm, g_norm, b_norm], axis=-1)  # (Z, X, Y, 3)
-
-    # Convert to uint8 for saving
-    rgb_image_uint8 = (rgb_image * 255).astype(np.uint8)
-
-    return rgb_image_uint8
-
-
 if __name__ == "__main__":
     # ---- Finding the latest modified scan folder ----
     scan_folder = find_last_modified_folder()
@@ -315,7 +223,7 @@ if __name__ == "__main__":
     
     # ---- Building the cube from scan ----
     rows, Zs = sort_images(scan_folder)
-    cube_nm, wavs, npz_path = build_cube(rows, Zs, scan_folder)
+    cube_nm, wavs, npz_path = build_cube(rows, Zs, scan_folder, start_nm, end_nm)
 
     # ---- Correcting snake-like X-offsets -------
     # 1) Building alternating +/- X-shifts per Z-row
@@ -332,20 +240,13 @@ if __name__ == "__main__":
     cube_nm = cube_nm_sym
     cube = CubeNM(cube_nm, wavs)
     print("Final cube shape (Z, X, Y, nm):", cube.shape)
+    
+    
+    # ---- Visualisations ----
+    _, _, H, _ = cube_nm.shape
+    y_middle = H // 2
 
-# ----------- VISUALISATIONS -----------
-
-_, _, H, _ = cube_nm.shape
-y_middle = H // 2
-
-visualise_wavelength_slice(cube, 520, os.path.join(scan_folder, "wavelength_520nm.png"))
-visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
-
-rgb_image = reconstruct_rgb_image(cube)
-#Choose one y_value (f.eks. midten)
-rgb_slice = rgb_image[:, :, y_middle, :]  # (Z, X, 3)
-
-# Lagre
-rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
-plt.imsave(rgb_image_path, rgb_slice)
-print(f"✅ Saved RGB image to: {rgb_image_path}")
+    visualise_wavelength_slice(cube, 520, os.path.join(scan_folder, "wavelength_520nm.png"))
+    visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
+    rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
+    rgb_image, out_path = reconstruct_rgb_image(cube, rgb_image_path, y=y_middle)
