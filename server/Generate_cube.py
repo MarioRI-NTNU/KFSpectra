@@ -1,44 +1,351 @@
-import os
+import os, re
 import numpy as np
 import cv2
+from collections import defaultdict
+import matplotlib.pyplot as plt
 
-# Paths
-#DATA_DIR = "/home/kybfarm/kybfarm/server/homeassistant/config/HSI/scanner_data"
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DATA_DIR = os.path.join(BASE_DIR, "edge", "data")
+# ----------------- CONFIG -----------------
+start_nm      = 400.0
+end_nm        = 800.0
+SHIFT         = -5 
+BASE_DIR      = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DATA_DIR      = os.path.join(BASE_DIR, "edge", "data")
+# -------------------------------------------
 
-print(f"Looking for scans in: {DATA_DIR}")
+def find_last_modified_folder(data_dir=DATA_DIR, prefix="scan_"):
+    """
+    Finds the latest modified folder in data_dir with the given prefix.
+    Returns the full path to the folder.
+    """
+    scan_folders = [f for f in os.listdir(data_dir)
+                    if f.startswith(prefix) and os.path.isdir(os.path.join(data_dir, f))]
+    if not scan_folders:
+        raise FileNotFoundError(f"No scan folders found in: {data_dir}")
 
-# Find latest scan folder
-scan_folders = [f for f in os.listdir(DATA_DIR)
-                if f.startswith("scan_") and os.path.isdir(os.path.join(DATA_DIR, f))]
-if not scan_folders:
-    raise FileNotFoundError(f"No scan folders found in: {DATA_DIR}")
+    scan_folders.sort(
+        key=lambda f: os.path.getmtime(os.path.join(data_dir, f)),
+        reverse=True
+    )
 
-scan_folders.sort(reverse=True)
-latest_scan = scan_folders[0]
-scan_folder = os.path.join(DATA_DIR, latest_scan)
+    latest_scan = scan_folders[0]
+    return os.path.join(data_dir, latest_scan)
 
-print(f"Using latest scan: {scan_folder}")
+def sort_images(scan_folder):
+    """
+    Scan a folder for images named like 'X<number>_Z<number>.png', group them by Z-position, and return:
+      - rows: dict[z] -> list of (x, full_path)
+      - Zs: sorted list of all Z-positions
+    """
+    pat = re.compile(r"X(\d+)[_-]Z(\d+)\.png", re.IGNORECASE)
+    rows = defaultdict(list)  # Z is key. z -> list[(x, path)]
 
-# Find images
-image_files = [f for f in os.listdir(scan_folder) if f.endswith(".png") and f.startswith("X")]
-image_files.sort()  # or sort by X number
+    for f in os.listdir(scan_folder):
+        # Only consider PNG files starting with X
+        if not (f.lower().endswith(".png") and f.upper().startswith("X")):
+            continue
 
-images = []
-for fname in image_files:
-    img_path = os.path.join(scan_folder, fname)
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        print(f"Warning: could not read {fname}")
-        continue
-    images.append(img)
+        m = pat.search(f)
+        if not m:
+            continue
 
-if not images:
-    raise RuntimeError("No valid images loaded.")
+        x10 = int(m.group(1))   # X index
+        z10 = int(m.group(2))   # Z index
+        rows[z10].append((x10, os.path.join(scan_folder, f))) #For each z-pos, have list of (x-pos, filepath)
 
-cube = np.stack(images, axis=2)  # (H, W, Bands)
+    if not rows:
+        raise RuntimeError(f"No X*_Z*.png images found in {scan_folder}.")
 
-npz_path = os.path.join(scan_folder, "hyperspectral_cube.npz")
-np.savez_compressed(npz_path, cube=cube)
-print(f"Saved cube to: {npz_path}")
+    Zs = sorted(rows.keys())  # sorted Z positions (top → bottom)
+    return rows, Zs
+
+class CubeNM:
+    def __init__(self, data, wavs_nm):
+        """
+        data: ndarray (Z, X, Y, W) where axis=3 corresponds to wavelengths
+        wavs_nm: ndarray (W,) with wavelengths in nm
+        """
+        self.data = data
+        self.wavs_nm = wavs_nm.astype(np.float32)
+        self.min_nm = float(wavs_nm[0])
+        self.max_nm = float(wavs_nm[-1])
+
+    def __getitem__(self, idx):
+        # Support cube[z, x, y, nm] with nm in wavelength range
+        if isinstance(idx, tuple) and len(idx) == 4 and isinstance(idx[3],(int, float, np.integer, np.floating)):
+            z, x, y, nm = idx
+            nm = float(nm)
+            if nm < self.min_nm or nm > self.max_nm:
+                raise IndexError(f"nm index {nm} out of range [{self.min_nm}, {self.max_nm}]")
+            k = int(np.searchsorted(self.wavs_nm, nm, side='left'))
+            if k == len(self.wavs_nm):
+                k -= 1
+            elif k > 0 and abs(self.wavs_nm[k] - nm) > abs(self.wavs_nm[k-1] - nm):
+                k -= 1
+            return self.data[z, x, y, k]
+        return self.data[idx]
+
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def numpy(self):
+        return self.data
+
+def build_cube(rows, Zs, scan_folder, start_nm, end_nm):
+    """
+    Build a hyperspectral cube from grouped scan rows.
+
+    Parameters:
+        rows: dict[z] -> list of (x, full_path)
+        Zs: sorted list of Z positions (keys from rows)
+        scan_folder: folder where the X*_Z*.png images are stored (used for saving npz)
+        start_nm: start wavelength 
+        end_nm: end wavelength 
+
+    Returns:
+        cube_nm: ndarray with shape (Z, X, Y, W)
+        wavs:    1D ndarray with wavelengths in nm (length = W)
+        npz_path: path to the saved .npz file
+    """
+    # ---- Read first frame to get H, W and wavelength grid ----
+    first_z = Zs[0]
+    first_x_sorted = sorted(rows[first_z], key=lambda t: t[0])
+    Xc = len(first_x_sorted)  # number of X positions in each Z row
+
+    sample_img = cv2.imread(first_x_sorted[0][1], cv2.IMREAD_GRAYSCALE)
+    if sample_img is None:
+        raise RuntimeError(f"Could not read {first_x_sorted[0][1]}")
+    H, W = sample_img.shape
+    print(f"Frame size: H={H}, W={W}")
+
+    wavs = np.linspace(start_nm, end_nm, W, dtype=np.float32)  # wavelength grid
+    print(f"Spectral grid: {len(wavs)} bands from {start_nm} nm to {end_nm} nm")
+
+    Zc = len(Zs)
+    cube_nm = np.zeros((Zc, Xc, H, len(wavs)), dtype=np.float32)  # empty cube [Z, X, Y, W]
+
+    # ---- Fill the cube (Z, X, Y, W) ----
+    for zi, z in enumerate(Zs):
+        x_paths = sorted(rows[z], key=lambda t: int(t[0]))
+        if len(x_paths) != Xc:
+            print(f"Row Z={z} has {len(x_paths)} X positions (expected {Xc}).")
+
+        for xi, (_x, path) in enumerate(x_paths):
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                raise RuntimeError(f"Could not read {path}")
+            if img.shape != (H, W):
+                raise RuntimeError(f"Inconsistent frame size at {path}: {img.shape} vs {(H, W)}")
+
+            # Store the full image for this (Z, X) position
+            cube_nm[zi, xi, :, :] = img.astype(np.float32)
+
+    print("Built cube_nm with shape (Z, X, Y, wavelength):", cube_nm.shape)
+
+    # ---- Save to disk ----
+    npz_path = os.path.join(scan_folder, "cube_ZXnm.npz")
+    np.savez_compressed(npz_path, cube=cube_nm, wavs_nm=wavs, Zs=np.array(Zs, dtype=np.int32))
+    print("Saved cube to:", npz_path)
+
+    return cube_nm, wavs, npz_path
+
+def build_alternating_shifts(Zc, plus_first=True):
+    """
+    Returns an array of alternating +SHIFT and -SHIFT for Zc layers.
+    
+    """
+    s = np.zeros(Zc, dtype=int)
+    for zi in range(Zc):
+        if plus_first:
+            s[zi] = SHIFT if (zi % 2 == 0) else -SHIFT
+        else:
+            s[zi] = -SHIFT if (zi % 2 == 0) else SHIFT
+    return s
+
+def apply_integer_x_shifts(cube_nm, shifts, pad_value=np.nan):
+    """
+    Creates a new cube with integer X-shifts applied per Z-layer.
+    Returns: shifted cube (with NaN in padded areas).
+    """
+    Zc, Xc, Yc, Wc = cube_nm.shape
+    out = np.full_like(cube_nm, pad_value)
+    for zi, s in enumerate(shifts):
+        if s == 0:
+            out[zi] = cube_nm[zi]
+        elif s > 0:
+            # Move towards right: data moves outward; left filled with NaN
+            out[zi, s:, :, :] = cube_nm[zi, :Xc - s, :, :]
+        else:
+            s2 = -s
+            # Move towards left
+            out[zi, :Xc - s2, :, :] = cube_nm[zi, s2:, :, :]
+    return out
+
+def crop_valid_overlap(shifted):
+    """
+    Finds the overlapping valid X-interval (all rows non-NaN), and crops the cube accordingly.
+    Returns: cropped cube and slice object for X dimension.
+    """
+    Zc, Xc, Yc, Wc = shifted.shape
+    mask = ~np.isnan(shifted[:, :, 0, 0])   # (Z, X)
+    left = 0
+    right = Xc
+    # Iterate through each Z row to find the first valid column
+    for zi in range(Zc):
+        row = mask[zi]
+        if row.any():
+            first = np.argmax(row)
+            if first > left:
+                left = first
+    # Iterate through each Z row to find the last valid column
+    for zi in range(Zc):
+        row = mask[zi]
+        if row.any():
+            last = Xc - np.argmax(row[::-1])
+            if last < right:
+                right = last
+    xs = slice(left, right) # Valid X range
+    return shifted[:, xs, :, :], xs # Return cropped cube and X slice
+
+def visualise_spectrum_at(cube, z, x, y):
+    """
+    Visualize spectrum from a specific position and row.
+    
+    Parameters:
+        cube: CubeNM object with shape (Z, X, Y, W)
+        z: Z position
+        x: X position  
+        y: Y position (row number in the image)
+    """
+    spec = cube[z, x, y, :]  # One spectrum from a specific (Z, X, Y)
+    print(f"Cube shape: {cube.shape}")
+    print(f"Spectrum at Z={z}, X={x}, Y={y}:")
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(cube.wavs_nm, spec, label=f'Z={z}, X={x}, Y-row={y}')
+    plt.xlabel("Wavelength (nm)")
+    plt.ylabel("Intensity")
+    plt.title(f"Spectrum at position (Z={z}, X={x}, Y={y})")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+def visualise_wavelength_slice(cube, wavelength_nm, out_path):
+    """
+    Visualize a single wavelength slice from the cube and save as PNG.
+
+    Parameters:
+        cube: CubeNM object with shape (Z, X, Y, W).
+        wavelength_nm: Wavelength in nanometers to visualize.
+        out_path: Output file path for the PNG image.
+    """
+    # Get 3D slice (Z, X, Y) at the requested wavelength.
+    slice_3d = cube[:, :, :, wavelength_nm]   # shape: (Z, X, Y)
+
+    # Aggregate over Y to get a 2D image (Z, X)
+    img = slice_3d.mean(axis=2)               # shape: (Z, X)
+
+    # Normalize for visualization
+    lo, hi = np.percentile(img, (1, 99))
+    img_n = np.clip((img - lo) / (hi - lo + 1e-6), 0, 1)
+
+    # Plot and save
+    plt.figure(figsize=(8, 6))
+    plt.imshow(img_n, cmap="gray", aspect='auto')
+    plt.xlabel("X position")
+    plt.ylabel("Z position")
+    plt.title(f"Slice of cube at wavelength: {float(wavelength_nm):.1f} nm")
+    plt.colorbar(label="Normalized intensity")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+    print(f"Wavelength ~{float(wavelength_nm):.1f} nm -> {out_path}")
+    
+def reconstruct_rgb_image(cube):
+    """
+    Reconstruct an RGB image from the cube using specific wavelengths for R, G, B.
+
+    Parameters:
+        cube: CubeNM object with shape (Z, X, Y, W)
+    """
+# Define the target wavelengths for R, G, B channels
+    r_wavelength = 620  # Red channel (620 nm)
+    g_wavelength = 520  # Green channel (540 nm)
+    b_wavelength = 460  # Blue channel (460 nm)
+
+    # ✅ Find indices for these wavelengths
+    r_idx = int(np.searchsorted(cube.wavs_nm, r_wavelength))
+    g_idx = int(np.searchsorted(cube.wavs_nm, g_wavelength))
+    b_idx = int(np.searchsorted(cube.wavs_nm, b_wavelength))
+    
+    print(f"RGB wavelengths: R={cube.wavs_nm[r_idx]:.1f}nm, G={cube.wavs_nm[g_idx]:.1f}nm, B={cube.wavs_nm[b_idx]:.1f}nm")
+
+    # ✅ Extract channels using raw numpy array (not CubeNM wrapper)
+    r_channel = cube.data[:, :, :, r_idx]  # (Z, X, Y)
+    g_channel = cube.data[:, :, :, g_idx]  # (Z, X, Y)
+    b_channel = cube.data[:, :, :, b_idx]  # (Z, X, Y)
+
+    # Normalize each channel to 0-1 range
+    def normalize_channel(ch):
+        ch_min, ch_max = ch.min(), ch.max()
+        if ch_max > ch_min:
+            return (ch - ch_min) / (ch_max - ch_min)
+        return ch
+    
+    r_norm = normalize_channel(r_channel)
+    g_norm = normalize_channel(g_channel)
+    b_norm = normalize_channel(b_channel)
+
+    # Stack the channels to create an RGB image
+    rgb_image = np.stack([r_norm, g_norm, b_norm], axis=-1)  # (Z, X, Y, 3)
+
+    # Convert to uint8 for saving
+    rgb_image_uint8 = (rgb_image * 255).astype(np.uint8)
+
+    return rgb_image_uint8
+
+
+if __name__ == "__main__":
+    # ---- Finding the latest modified scan folder ----
+    scan_folder = find_last_modified_folder()
+    #To choose a specific scan folder use this: 
+    #scan_folder = "/Users/hannahalse/KFSpectra/edge/data/scan_16November_13:58:13"
+    print("Using this scan folder:", scan_folder)
+    
+    # ---- Building the cube from scan ----
+    rows, Zs = sort_images(scan_folder)
+    cube_nm, wavs, npz_path = build_cube(rows, Zs, scan_folder)
+
+    # ---- Correcting snake-like X-offsets -------
+    # 1) Building alternating +/- X-shifts per Z-row
+    alt_shifts = build_alternating_shifts(Zc=len(Zs), plus_first=True)
+
+    # 2) Applying shifts to the cube (NaNs at the edges)
+    shifted_cube = apply_integer_x_shifts(cube_nm, alt_shifts, pad_value=np.nan)
+
+    # 3) Cropping to the common valid X-overlap
+    cube_nm_sym, xslice = crop_valid_overlap(shifted_cube)
+    print("Sym-shifted & cropped cube shape:", cube_nm_sym.shape, "X slice:", xslice)
+
+    # 4) Continue working with the corrected cube wrapped in CubeNM ---
+    cube_nm = cube_nm_sym
+    cube = CubeNM(cube_nm, wavs)
+    print("Final cube shape (Z, X, Y, nm):", cube.shape)
+
+# ----------- VISUALISATIONS -----------
+
+_, _, H, _ = cube_nm.shape
+y_middle = H // 2
+
+visualise_wavelength_slice(cube, 520, os.path.join(scan_folder, "wavelength_520nm.png"))
+visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
+
+rgb_image = reconstruct_rgb_image(cube)
+#Choose one y_value (f.eks. midten)
+rgb_slice = rgb_image[:, :, y_middle, :]  # (Z, X, 3)
+
+# Lagre
+rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
+plt.imsave(rgb_image_path, rgb_slice)
+print(f"✅ Saved RGB image to: {rgb_image_path}")
