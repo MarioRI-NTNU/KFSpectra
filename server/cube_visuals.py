@@ -1,4 +1,3 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -57,7 +56,6 @@ def visualise_wavelength_slice(cube, wavelength_nm, out_path):
     plt.close()
     print(f"Wavelength ~{float(wavelength_nm):.1f} nm -> {out_path}")
     
-
 def reconstruct_rgb_image(cube, out_path, y=None, aggregate="mean"):
     """
     Reconstruct and save an RGB image from the cube using specific wavelengths for R, G, B.
@@ -127,4 +125,3 @@ def reconstruct_rgb_image(cube, out_path, y=None, aggregate="mean"):
     print(f"Saved RGB image to: {out_path}")
 
     return rgb_image_uint8, out_path
-
