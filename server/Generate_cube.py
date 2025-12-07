@@ -10,6 +10,12 @@ from cube_visuals import (
     reconstruct_rgb_image,
 )
 
+from SpectralTools import (
+    calculate_nir_red_indices,
+    calculate_ndvi,
+)
+
+
 # ----------------- CONFIG -----------------
 start_nm      = 400.0
 end_nm        = 800.0
@@ -145,6 +151,8 @@ def build_cube(rows, Zs, scan_folder, start_nm, end_nm):
                 raise RuntimeError(f"Inconsistent frame size at {path}: {img.shape} vs {(H, W)}")
 
             # Store the full image for this (Z, X) position
+            #Flip the image horizontally
+            img = np.fliplr(img)   
             cube_nm[zi, xi, :, :] = img.astype(np.float32)
 
     print("Built cube_nm with shape (Z, X, Y, wavelength):", cube_nm.shape)
@@ -242,11 +250,46 @@ if __name__ == "__main__":
     print("Final cube shape (Z, X, Y, nm):", cube.shape)
     
     
-    # ---- Visualisations ----
+
+
     _, _, H, _ = cube_nm.shape
     y_middle = H // 2
-
-    visualise_wavelength_slice(cube, 520, os.path.join(scan_folder, "wavelength_520nm.png"))
-    visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
     rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
     rgb_image, out_path = reconstruct_rgb_image(cube, rgb_image_path, y=y_middle)
+    
+    """
+    # ---- Visualisations ----
+    #_, _, H, _ = cube_nm.shape
+    #y_middle = H // 2
+
+    #visualise_wavelength_slice(cube, 520, os.path.join(scan_folder, "wavelength_520nm.png"))
+    #visualise_spectrum_at(cube, z=35, x=3, y=y_middle)
+    #rgb_image_path = os.path.join(scan_folder, "reconstructed_rgb.png")
+    #rgb_image, out_path = reconstruct_rgb_image(cube, rgb_image_path, y=y_middle)
+    
+
+    cube_file = "../edge/data/scan_16November_13:58:13/cube_ZXnm.npz"
+    data = np.load(cube_file)
+    cube = data["cube"]
+    wavelengths = data["wavs_nm"]
+    #print(f"Number of wavelengths {len(wavelengths)} from {wavelengths[0]} nm to {wavelengths[-1]} nm")
+    #print(f"Cube shape: {cube.shape}, whare length of cube[3] is: {cube.shape[3]}")
+
+    z, x = 18, 25  # velg en piksel midt på bladet
+    spectrum = cube[z, x, 225, :]  # hvis form (Z, Y, X, B) og du tar Z=0
+
+    plt.plot(wavelengths, spectrum)
+    plt.xlabel("Wavelength [nm]")
+    plt.ylabel("Intensity")
+    plt.show()
+
+    # ----- NDVI Calculation -----
+    #red_idx, nir_idx = calculate_nir_red_indices(cube, wavelengths)
+    #print("red_idx, nir_idx:", red_idx, nir_idx)
+    #ndvi_image = calculate_ndvi(cube, red_idx, nir_idx)
+    """
+
+
+  
+    
+                                                 

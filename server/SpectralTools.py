@@ -5,49 +5,63 @@ import matplotlib.pyplot as plt
 # ----------------------------------------------------------------
 #  Calculation of NIR and RED indices
 # ----------------------------------------------------------------
-def calculate_nir_red_indices(cube:np.ndarray) -> tuple:
+def calculate_nir_red_indices(cube: np.ndarray, wavelengths: np.ndarray) -> tuple:
     """
-    Calculate NIR and RED indices from a hyperspectral cube.
+    Determine the index positions of the RED and NIR wavelengths in the hyperspectral cube.
 
     Parameters:
         cube: np.ndarray of shape (H, W, B)
+        wavelengths: np.ndarray of shape (B,), containing the wavelength for each band
 
     Returns:
-        A tuple containing the RED and NIR indices.
+        A tuple (red_idx, nir_idx) with the indices closest to 660 nm and 800 nm.
     """
 
-    wavelengths = np.linspace(400, 800, cube.shape[2])  #Camera takes wavelengths from 400nm to 800nm 
-    print(f"Number of bands: {cube.shape[2]}")
-    red_idx = np.argmin(np.abs(wavelengths - 660))  # Approx 660nm for RED
-    nir_idx = np.argmin(np.abs(wavelengths - 800))  # Approx 800nm for NIR
-    print(f"Calculated RED index: {red_idx}, NIR index: {nir_idx}")
+    if wavelengths.shape[0] != cube.shape[3]:
+        raise ValueError("Wavelength array must have same length as number of bands in cube.")
+
+    target_red = 660
+    target_nir = 800
+
+    red_idx = np.argmin(np.abs(wavelengths - target_red))
+    nir_idx = np.argmin(np.abs(wavelengths - target_nir))
+
+    print(f"Number of bands: {cube.shape[3]}")
+    print(f"RED (≈660 nm) found at index: {red_idx}, wavelength={wavelengths[red_idx]:.1f} nm")
+    print(f"NIR (≈800 nm) found at index: {nir_idx}, wavelength={wavelengths[nir_idx]:.1f} nm")
+
     return red_idx, nir_idx
 
 
-# ----------------------------------------------------------------
-#  NDVI Calculation - Maybe make it so that it returns only the ones that actually detects a plant? Not background? 
-# ----------------------------------------------------------------
+
 def calculate_ndvi(cube: np.ndarray, red_band_idx: int, nir_band_idx: int) -> np.ndarray:
     """
-    Calculate NDVI from a hyperspectral cube.
+    Compute an NDVI image from a hyperspectral cube using RED and NIR band indices.
 
     Parameters:
         cube: np.ndarray of shape (H, W, B)
-        red_band_idx: index of the red band
+        red_band_idx: index of the RED band
         nir_band_idx: index of the NIR band
 
     Returns:
-        NDVI image (H, W) as float32 (array)
+        A float32 NDVI image with shape (H, W).
     """
-    ndvi = np.full(cube.shape[:2], np.nan, dtype=np.float32)
-    red = cube[:, :, red_band_idx].astype(np.float32)
-    nir = cube[:, :, nir_band_idx].astype(np.float32)
-    num = nir - red
-    den = nir + red
-    small_val = 1e-6
-    mask = np.abs(den) < small_val
-    np.divide(num, den, out=ndvi, where=~mask)  #To avoid dividing by zero
+
+    red = cube[:, :, :, red_band_idx].astype(np.float32)
+    nir = cube[:, :, :, nir_band_idx].astype(np.float32)
+
+    numerator = nir - red
+    denominator = nir + red
+
+    ndvi = np.full_like(red, np.nan, dtype=np.float32)
+    mask = np.abs(denominator) < 1e-6
+
+    np.divide(numerator, denominator, out=ndvi, where=~mask)
     ndvi[mask] = np.nan
-    mean = np.nanmean(ndvi)             #Ignores NaN values
-    print(f"Mean NDVI calculates is: {mean}. Red mean: {np.nanmean(red)}, NIR mean: {np.nanmean(nir)}")
+
+    print(
+        f"NDVI mean value: {np.nanmean(ndvi):.4f} "
+        f"(RED mean={np.nanmean(red):.2f}, NIR mean={np.nanmean(nir):.2f})"
+    )
+
     return ndvi

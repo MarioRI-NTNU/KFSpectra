@@ -1,6 +1,9 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+
+
 
 
 def extract_spectrum_from_row(raw_path, row, start_nm=400.0, end_nm=800.0, show_plot=False):
@@ -28,11 +31,15 @@ def extract_spectrum_from_row(raw_path, row, start_nm=400.0, end_nm=800.0, show_
     print(f"Raw image shape: H={H}, W={W}")
     wavelengths = np.linspace(start_nm, end_nm, W, dtype=np.float32)
     spectrum = img[row, :].astype(np.float32)
+    x = np.arange(spectrum.size)
+
 
     if show_plot:
         plt.figure(figsize=(8, 4))
-        plt.plot(wavelengths, spectrum)
-        plt.xlabel("Wavelength (nm)")
+        #plt.plot(wavelengths, spectrum)
+        plt.plot(x, spectrum)
+        #plt.xlabel("Wavelength (nm)")
+        plt.xlabel("Pixel")
         plt.ylabel("Intensity")
         plt.title(f"Spectrum from raw image (row={row})")
         plt.grid(True, alpha=0.3)
@@ -42,13 +49,6 @@ def extract_spectrum_from_row(raw_path, row, start_nm=400.0, end_nm=800.0, show_
     return wavelengths, spectrum
 
 
-#wavs, spec = extract_spectrum_from_row(
-#    raw_path="/Users/hannahalse/KFSpectra/smile_keystone/calibration_data/hg_200ms.png",
-#    row=600,
-#    start_nm=400.0,
-#    end_nm=800.0,
-#    show_plot=True
-#)
 
 def quantify_smile_from_raw(
     raw_path,
@@ -72,7 +72,7 @@ def quantify_smile_from_raw(
         results: dict[line_index] -> info om smile for hver spektrallinje
     """
 
-    # 1) Les bilde
+    # Read image
     img = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise RuntimeError(f"Could not read image: {raw_path}")
@@ -84,7 +84,7 @@ def quantify_smile_from_raw(
     else:
         y0, y1 = max(0, y_roi[0]), min(H, y_roi[1])
 
-    # 2) Finn spektrallinjer som topper i integrert profil langs x
+    # Find spectral lines as peaks in the integrated profile along x
     profile = img[y0:y1, :].sum(axis=0).astype(np.float32)
     max_val = profile.max()
     thresh = peak_thresh_rel * max_val
@@ -102,7 +102,7 @@ def quantify_smile_from_raw(
 
     results = {}
 
-    # 3) For hver linje: finn senter som funksjon av y
+    #For each line: find center as function of y 
     for li, x0 in enumerate(peak_xs):
         ys = []
         xs_centers = []
@@ -126,7 +126,7 @@ def quantify_smile_from_raw(
         ys = np.array(ys, dtype=np.float32)
         xs_centers = np.array(xs_centers, dtype=np.float32)
 
-        # 4) Fit rett linje og beregn smile
+        # Fit x = a*y + b and calculate smile 
         coeffs = np.polyfit(ys, xs_centers, 1)  # x_fit = a*y + b
         x_fit = np.polyval(coeffs, ys)
         smile = xs_centers - x_fit
@@ -199,6 +199,52 @@ def quantify_smile_from_raw(
         print(f"Example line {first_key}: max |smile| = {r0['max_abs_smile_pix']:.3f} px")
 
     return results
+
+
+def locate_peaks(spec, noise_level = 30, min_distance_pixels = 5):
+    """
+    Locate peaks in a spectrum above a certain noise level and minimum distance.
+
+    Parameters:
+    spec: 1D numpy array of intensity values
+    noise_level: minimum height for a peak to be considered valid
+    min_distance_pixels: minimum distance between peaks in pixels
+
+    Returns:
+    peak_wavs: wavelengths of detected peaks
+    peak_vals: intensity values of detected peaks
+    """
+    peaks_idx, props = find_peaks(
+        spec,
+        height=noise_level,
+        distance=min_distance_pixels
+    )
+    peak_wavs = wavs[peaks_idx]
+    peak_vals = spec[peaks_idx]
+    
+    print(f"Found {len(peaks_idx)} peaks above noise level {noise_level}.")
+    for w, v in zip(peak_wavs, peak_vals):
+        print(f"λ = {w:.2f} nm, intensity = {v:.1f}")
+    return peaks_idx, peak_wavs, peak_vals, props
+
+
+
+wavs, spec = extract_spectrum_from_row(
+    raw_path="/Users/hannahalse/KFSpectra/smile_keystone/calibration_data/hg_200ms.png",
+    row=400,
+    start_nm=400.0,
+    end_nm=800.0,
+    show_plot=True
+)
+
+
+peaks_idx, peak_wavs, peak_vals, props = locate_peaks(spec)
+
+strong_idx = np.argsort(peak_vals)[-10:]
+for idx in strong_idx:
+    print("pixel:", peaks_idx[idx], "| intensity:", peak_vals[idx])
+
+
 
 
 results = quantify_smile_from_raw(
